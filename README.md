@@ -22,12 +22,14 @@ Original implementation: **Chong Zhang** (ETH Zurich). Code license: [MIT](LICEN
 | Path | Purpose |
 |---|---|
 | `pyproject.toml`, `uv.lock` | Native Python package and locked runtime dependencies |
-| `supermimic/robot.py` | G1 MJCF, mjlab entity, actuator settings and joint ordering |
-| `supermimic/env.py` | mjlab scene/simulation wrapper, state reads, resets and domain randomization |
+| `supermimic/assets/g1/` | G1 MJCF, mjlab entity, actuator settings and joint ordering |
+| `supermimic/tasks/g1_tracking/` | Current task's scene, simulation, MDP and learning configuration |
+| `supermimic/tasks/` | Task registration, dimensions, environment construction and checkpoint contract |
+| `supermimic/envs/` | Native mjlab lifecycle, state reads, stepping and terminal-transition handling |
+| `supermimic/mdp/` | Commands, actions, events, observations, rewards, termination and state/dynamics functions |
 | `supermimic/motion.py`, `kinematics.py` | Motion loading, resampling and differentiable forward kinematics |
-| `supermimic/mdp.py` | Observations, goals, reward and termination functions |
-| `supermimic/networks.py`, `buffer.py`, `train.py` | World model, replay, imagined BPTT policy updates and critic training |
-| `supermimic/evaluate.py` | Deterministic per-clip checkpoint evaluation |
+| `supermimic/rl/` | World model, replay, imagined BPTT policy updates, critic and evaluation |
+| `supermimic/train.py`, `evaluate.py` | Import-safe command-line entry points |
 | `tools/` | Setup, data download, URDF-to-MJCF conversion, checks, plotting and rendering |
 | `docker/` | Optional plain Python/uv container; no simulator SDK image |
 | `data/` | Downloaded motions and G1 assets; not tracked |
@@ -56,11 +58,46 @@ parameters and action scaling as the previous implementation. `TrackingSim` owns
 creation and cleanup, with no global application launcher:
 
 ```python
-from supermimic.env import TrackingSim
+from supermimic.tasks import load_task
 
-with TrackingSim(num_envs, motion, mdp, device="cuda:0") as env:
+task = load_task("g1_tracking", motion_dir="data/lafan1_g1", device="cuda:0")
+with task.make_env(num_envs, device="cuda:0", gamma=0.99) as env:
     transition = env.step(action)
 ```
+
+The structure follows HDMI's `assets / tasks / mdp / rl` boundaries. Task configuration
+assembles the scene and the analytic MDP heads used by both physical simulation and imagined
+rollouts. Learning remains SuperMimic's differentiable world-model method. Existing imports
+such as `supermimic.env.TrackingSim`, `supermimic.robot`, `supermimic.networks` and
+`supermimic.buffer` remain compatibility entry points; new code should use their package
+locations. See [CONTEXT.md](CONTEXT.md) for the state and transition contracts and
+[the architecture decision](docs/adr/0001-task-and-dynamics-boundaries.md) for the rationale.
+
+### Extending toward object interaction
+
+Scene composition lives in `tasks/g1_tracking/env_cfgs.py`: a new task can add native mjlab
+`EntityCfg` objects to `cfg.scene.entities` and `ContactSensorCfg` instances to
+`cfg.scene.sensors`, as HDMI does for its suitcase. The low-level `TrackingSim(..., cfg=cfg)`
+path supports this composition for simulation experiments.
+
+Object-conditioned **training is not implemented by adding an entity alone**. The current
+G1 learned state contains only the robot. Its task factory rejects additional entities to
+prevent collecting transitions whose object dynamics are invisible to the world model.
+To train an interaction task:
+
+1. Add the object's asset and a separate task configuration; keep G1 tracking as a baseline.
+2. Define the task state, flatten/unflatten layout, dynamics features, predicted increments
+   and losses for both robot and object; update dimensions and the checkpoint contract.
+3. Add object/contact references to the motion command and encode the required goals,
+   observations, context and critic inputs.
+4. Define rewards and hard/soft termination consistently for physical and imagined states.
+   Contact sensors provide real training targets; imagined contact-dependent rewards need
+   a differentiable predictor or analytic approximation.
+5. Add object initialization/reset behavior, then verify physical transitions, partial reset,
+   model fitting and reward gradients before running policy training.
+
+Native object/contact integration tests validate the simulation boundary; they do not claim
+that a policy can already learn object manipulation.
 
 mjlab's `BuiltinPositionActuatorCfg` preserves the joint torque caps, but has no equivalent
 to Isaac Lab's `velocity_limit_sim`. Motor speed limits remain metadata rather than a
@@ -117,6 +154,14 @@ The migration was checked on an RTX 4070 Laptop GPU: ten CPU/CUDA regression cas
 and a three-iteration run on one real LAFAN1 walking clip exercised simulation collection,
 world-model fitting, BPTT policy/critic updates, checkpoint reload and evaluation recording.
 This short check used reduced batches and `--no_compile`; it is not a trained policy benchmark.
+
+The subsequent modular refactor passes **25 CPU/CUDA regression cases**, including those
+original ten. Added checks cover import safety, independent task configurations, task-sized
+replay/models, checkpoint layout validation, reward gradients through the world model and a
+native free box with a contact sensor. The box test also confirms that configured reward
+terms agree between physical transitions and the shared analytic head, and partial resets
+preserve other worlds' contact histories. Event regressions verify that replay captures
+velocity changes made by step and interval events.
 
 ## Training and evaluation
 

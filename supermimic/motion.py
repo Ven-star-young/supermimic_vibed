@@ -8,7 +8,7 @@ import os
 import numpy as np
 import torch
 
-from .kinematics import G1Kinematics
+from .assets.g1.kinematics import G1Kinematics
 from .rotations import mat_to_6d, quat_slerp, quat_to_mat, so3_log, yaw_mat
 
 CONTROL_DT = 0.02
@@ -16,7 +16,13 @@ BIN_FRAMES = 50  # 1 s bins for return-based reset sampling
 
 
 class MotionLib:
+    control_dt = CONTROL_DT
+    bin_frames = BIN_FRAMES
+    goal_feature_dim = 73
+
     def __init__(self, files: list[str], kin: G1Kinematics, device: str, src_fps: float = 30.0):
+        if not files:
+            raise ValueError("No motion CSV files found; download data or provide --motion_dir")
         self.device = device
         self.names = [os.path.splitext(os.path.basename(f))[0] for f in files]
         ps, qs, js = [], [], []
