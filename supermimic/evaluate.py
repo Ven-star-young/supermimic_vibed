@@ -18,7 +18,6 @@ import time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
-from isaaclab.app import add_launcher_args, launch_simulation
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--run_dir", type=str, required=True)
@@ -27,14 +26,14 @@ parser.add_argument("--ckpt", type=str, default=None, help="evaluate one checkpo
 parser.add_argument("--record", type=str, default=None, help="save trajectories (npz) for rendering")
 parser.add_argument("--motion_dir", type=str, default=os.path.join(REPO, "data", "lafan1_g1"))
 parser.add_argument("--every", type=int, default=1, help="evaluate every n-th checkpoint")
-add_launcher_args(parser)
+parser.add_argument("--device", type=str, default="cuda:0")
 args = parser.parse_args()
 
 import numpy as np
 import torch
 
 import supermimic.networks as networks
-from supermimic.env import TrackingSim, make_sim
+from supermimic.env import TrackingSim
 from supermimic.kinematics import G1Kinematics
 from supermimic.mdp import MAX_STEP_REWARD, OBS_DIM, MDP
 from supermimic.motion import MotionLib
@@ -42,7 +41,7 @@ from supermimic.networks import Policy
 from supermimic.robot import default_joint_pos_list
 
 torch.backends.cuda.matmul.allow_tf32 = True
-dev = "cuda:0"
+dev = args.device
 kin = G1Kinematics(dev)
 motion = MotionLib.from_dir(args.motion_dir, kin, dev)
 mdp = MDP(kin, motion, torch.tensor(default_joint_pos_list(), device=dev))
@@ -96,9 +95,7 @@ def evaluate(env: TrackingSim, ck: dict, record: str | None = None) -> dict:
     return res
 
 
-sim_cfg = make_sim(dev, args)
-with launch_simulation(sim_cfg, args):
-    env = TrackingSim(sim_cfg, C, motion, mdp, eval_mode=True)
+with TrackingSim(C, motion, mdp, device=dev, eval_mode=True) as env:
     if args.ckpt:
         ck = torch.load(args.ckpt, map_location=dev)
         res = evaluate(env, ck, args.record)

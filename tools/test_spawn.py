@@ -1,67 +1,46 @@
-"""Spawn G1s on Newton/MuJoCo-Warp, report ordering and stepping throughput."""
+"""Spawn G1s directly in mjlab and report simulator control-step throughput."""
 
 import argparse
-import os
+from pathlib import Path
 import sys
 import time
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-
-from isaaclab.app import add_launcher_args, launch_simulation
-
-parser = argparse.ArgumentParser()
-parser.add_argument("--num_envs", type=int, default=4096)
-parser.add_argument("--mj_contacts", type=int, default=1)
-add_launcher_args(parser)
-args = parser.parse_args()
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import torch
-from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
 
-import isaaclab.sim as sim_utils
-from isaaclab.assets import AssetBaseCfg
-from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sim import SimulationContext
-from isaaclab.utils import configclass, instantiate, replace
-
-from supermimic.robot import G1_CFG
+from supermimic.env import TrackingSim
+from supermimic.kinematics import G1Kinematics
+from supermimic.mdp import MDP
+from supermimic.robot import G1_JOINT_NAMES, default_joint_pos_list
+from tools._smoke import load_motion, synchronize
 
 
-@configclass
-class SceneCfg(InteractiveSceneCfg):
-    ground = AssetBaseCfg(prim_path="/World/ground", spawn=sim_utils.GroundPlaneCfg())
-    robot = replace(G1_CFG, prim_path="{ENV_REGEX_NS}/Robot")
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--num_envs", type=int, default=64)
+    parser.add_argument("--steps", type=int, default=100)
+    parser.add_argument("--device", default="cuda:0")
+    args = parser.parse_args()
+    kin = G1Kinematics(args.device)
+    motion = load_motion(kin, args.device)
+    mdp = MDP(kin, motion, torch.tensor(default_joint_pos_list(), device=args.device))
+    with TrackingSim(args.num_envs, motion, mdp, device=args.device) as env:
+        print("SIMULATOR JOINTS", env.robot.joint_names)
+        print("POLICY JOINTS", G1_JOINT_NAMES)
+        print("BODIES", env.robot.body_names)
+        action = torch.zeros(args.num_envs, 29, device=args.device)
+        for _ in range(5):
+            env.step(action)
+        synchronize(args.device)
+        start = time.perf_counter()
+        for _ in range(args.steps):
+            result = env.step(action)
+        synchronize(args.device)
+        elapsed = time.perf_counter() - start
+        assert torch.isfinite(result["s1"]).all()
+        print(f"{args.steps * args.num_envs / elapsed:.0f} environment transitions/s at 50 Hz control")
 
 
-physics = NewtonCfg(
-    solver_cfg=MJWarpSolverCfg(
-        njmax=200, nconmax=64, cone="pyramidal", integrator="implicitfast", use_mujoco_contacts=bool(args.mj_contacts)
-    ),
-    num_substeps=4,
-)
-sim_cfg = sim_utils.SimulationCfg(dt=0.02, device=args.device or "cuda:0", physics=physics)
-with launch_simulation(sim_cfg, args):
-    sim = SimulationContext(sim_cfg)
-    scene = instantiate(SceneCfg(num_envs=args.num_envs, env_spacing=0.0, replicate_physics=True))
-    sim.reset()
-    robot = scene["robot"]
-    print("JOINTS", robot.joint_names)
-    print("BODIES", robot.body_names)
-    print("default q", robot.data.default_joint_pos.torch[0])
-    print("stiffness", robot.data.joint_stiffness.torch[0])
-    print("armature", robot.data.joint_armature.torch[0])
-    print("mass", robot.data.body_mass.torch[0].sum())
-    target = robot.data.default_joint_pos.torch.clone()
-    for it in range(3):
-        torch.cuda.synchronize()
-        t0 = time.time()
-        n = 100
-        for _ in range(n):
-            robot.set_joint_position_target_index(target=target + 0.1 * torch.randn_like(target))
-            scene.write_data_to_sim()
-            sim.step(render=False)
-            scene.update(0.02)
-            _ = robot.data.body_link_pose_w.torch
-        torch.cuda.synchronize()
-        dt = time.time() - t0
-        print(f"steps/s (control 50Hz) = {n * args.num_envs / dt:.0f}; root z mean {robot.data.root_link_pos_w.torch[:, 2].mean():.3f}")
+if __name__ == "__main__":
+    main()

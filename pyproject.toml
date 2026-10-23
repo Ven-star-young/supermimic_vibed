@@ -1,0 +1,28 @@
+[project]
+name = "supermimic"
+version = "0.2.0"
+description = "SuperMimic motion tracking with native mjlab simulation"
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+dependencies = [
+    "mjlab==1.6.0",
+    "mujoco~=3.11.0",
+    "torch>=2.7.0",
+    "numpy>=1.26",
+    "matplotlib>=3.9",
+    "pillow>=10",
+]
+
+[build-system]
+requires = ["uv_build>=0.8.18,<0.9.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "supermimic"
+module-root = ""
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

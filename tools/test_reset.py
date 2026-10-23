@@ -1,29 +1,45 @@
-"""Check that state() reflects a reset immediately (no stale data)."""
-import argparse, os, sys
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from isaaclab.app import add_launcher_args, launch_simulation
-parser = argparse.ArgumentParser(); add_launcher_args(parser); args = parser.parse_args()
+"""Check immediate and partial mjlab resets, including root-link velocity."""
+
+import argparse
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import torch
-from supermimic.env import TrackingSim, make_sim
+
+from supermimic.env import TrackingSim
 from supermimic.kinematics import G1Kinematics
 from supermimic.mdp import MDP
-from supermimic.motion import MotionLib
 from supermimic.robot import default_joint_pos_list
-dev = "cuda:0"
-kin = G1Kinematics(dev); motion = MotionLib.from_dir(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "lafan1_g1"), kin, dev)
-mdp = MDP(kin, motion, torch.tensor(default_joint_pos_list(), device=dev))
-sim_cfg = make_sim(dev, args)
-with launch_simulation(sim_cfg, args):
-    env = TrackingSim(sim_cfg, 64, motion, mdp, eval_mode=True)
-    ids = torch.arange(64, device=dev)
-    for _ in range(30):
-        env.step(torch.zeros(64, 29, device=dev))
-    fr = motion.clip_start[ids % 40] + 200
-    env.reset(ids, fr)
-    S = env.state(); ref = motion.ref_state(fr)
-    print("no update:", [round((a - b).abs().max().item(), 4) for a, b in zip(S, ref)])
-    env.scene.update(0.0)
-    S = env.state()
-    print("after update(0):", [round((a - b).abs().max().item(), 4) for a, b in zip(S, ref)])
-    out = env.step(torch.zeros(64, 29, device=dev))
-    print("step s vs ref:", [round((a - b).abs().max().item(), 4) for a, b in zip(env.mdp.__class__.__mro__ and __import__('supermimic.mdp', fromlist=['x']).unflatten_state(out['s']), ref)])
+from tools._smoke import load_motion
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--num_envs", type=int, default=8)
+    parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--motion_dir", help="Optional LAFAN1 CSV directory; default: synthetic motion")
+    args = parser.parse_args()
+    if args.num_envs < 2:
+        parser.error("--num_envs must be at least 2 for a partial reset check")
+    kin = G1Kinematics(args.device)
+    motion = load_motion(kin, args.device, args.motion_dir)
+    mdp = MDP(kin, motion, torch.tensor(default_joint_pos_list(), device=args.device))
+    with TrackingSim(args.num_envs, motion, mdp, device=args.device, eval_mode=True) as env:
+        for _ in range(3):
+            env.step(torch.zeros(args.num_envs, 29, device=args.device))
+        before = env.state()
+        ids = torch.arange(0, args.num_envs, 2, device=args.device)
+        untouched = torch.arange(1, args.num_envs, 2, device=args.device)
+        frames = motion.clip_start[ids % len(motion.names)]
+        env.reset(ids, frames)
+        for name, actual, expected, previous in zip(("p", "R", "v", "w", "q", "qd"), env.state(), motion.ref_state(frames), before):
+            torch.testing.assert_close(actual[ids], expected, atol=2e-5, rtol=2e-5)
+            torch.testing.assert_close(actual[untouched], previous[untouched], atol=2e-5, rtol=2e-5)
+            print(f"reset {name}: max error {(actual[ids] - expected).abs().max().item():.2e}")
+    print("mjlab reset checks passed")
+
+
+if __name__ == "__main__":
+    main()

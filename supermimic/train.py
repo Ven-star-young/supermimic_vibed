@@ -12,7 +12,6 @@ import time
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-from isaaclab.app import add_launcher_args, launch_simulation
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--num_envs", type=int, default=4096)
@@ -42,15 +41,16 @@ parser.add_argument("--motion_dir", type=str, default=os.path.join(REPO, "data",
 parser.add_argument("--log_dir", type=str, default=os.path.join(REPO, "logs", "run"))
 parser.add_argument("--seed", type=int, default=0)
 parser.add_argument("--resume", type=str, default=None)
+parser.add_argument("--no_compile", action="store_true", help="disable torch.compile for debugging and small smoke runs")
 parser.add_argument("--amp", type=str, default="bf16", choices=["none", "bf16"], help="autocast dtype for MLP matmuls")
-add_launcher_args(parser)
+parser.add_argument("--device", type=str, default="cuda:0")
 args = parser.parse_args()
 
 import torch
 import torch.nn as nn
 
 from supermimic.buffer import ReplayBuffer
-from supermimic.env import TrackingSim, make_sim
+from supermimic.env import TrackingSim
 from supermimic.kinematics import G1Kinematics
 from supermimic.mdp import CRITIC_EXTRA, INV_DIM, MDP, OBS_DIM, invariant_features, normalize_xi, unflatten_state
 from supermimic.motion import MotionLib
@@ -62,7 +62,7 @@ torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 torch.manual_seed(args.seed)
 networks.AMP_DTYPE = torch.bfloat16 if args.amp == "bf16" else None
-dev = "cuda:0"
+dev = args.device
 os.makedirs(args.log_dir, exist_ok=True)
 json.dump(vars(args), open(os.path.join(args.log_dir, "args.json"), "w"), indent=2)
 
@@ -125,11 +125,12 @@ def _critic_input(S, f, xi_n, g):
     return torch.cat((mdp.critic_features(S, f, xi_n), g), -1)
 
 
-wm_rollout = torch.compile(_wm_rollout)
-wm_err = torch.compile(_wm_err)
-imag_step = torch.compile(_imag_step)
-reward_term = torch.compile(_reward_term)
-critic_input_c = torch.compile(_critic_input)
+compile_fn = (lambda fn: fn) if args.no_compile else torch.compile
+wm_rollout = compile_fn(_wm_rollout)
+wm_err = compile_fn(_wm_err)
+imag_step = compile_fn(_imag_step)
+reward_term = compile_fn(_reward_term)
+critic_input_c = compile_fn(_critic_input)
 
 
 def lr_at(it: int) -> float:
@@ -257,9 +258,7 @@ def policy_update():
 
 
 # ------------------------------------------------------------------------------------------------
-sim_cfg = make_sim(dev, args)
-with launch_simulation(sim_cfg, args):
-    env = TrackingSim(sim_cfg, args.num_envs, motion, mdp, gamma=args.gamma)
+with TrackingSim(args.num_envs, motion, mdp, device=dev, gamma=args.gamma) as env:
     buffer = ReplayBuffer(args.buffer_steps, args.num_envs, dev)
     obs_hist = torch.zeros(args.num_envs, Hh, OBS_DIM, device=dev)
 
