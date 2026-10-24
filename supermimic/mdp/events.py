@@ -1,7 +1,8 @@
 """mjlab events for physical context and reference-state initialization.
 
-These run only in the simulator. Differentiable rewards/observations live in
-separate tensor modules and consume the recorded physical context.
+Physical context is stored on the motion command and recorded into replay.
+Reference initialization is invoked by that command after reset events, so the
+sampled frame and the written robot state always agree.
 """
 from dataclasses import dataclass
 
@@ -34,34 +35,40 @@ class ReferenceResetCfg:
 
 
 @requires_model_fields("geom_friction", "body_ipos", recompute=RecomputeLevel.set_const)
-def randomize_physics(env, env_ids, cfg: PhysicalContextCfg):
+def randomize_physics(env, env_ids=None, command_name: str = "motion"):
+    cmd = env.command_manager.get_term(command_name)
+    cfg = cmd.cfg.physical_cfg
     ids = torch.arange(env.num_envs, device=env.device) if env_ids is None else env_ids
     robot = env.scene[cfg.entity_name]
-    if env.eval_mode:
-        env.xi[ids, 0] = cfg.evaluation_friction
+    if cmd.cfg.play:
+        cmd.xi[ids, 0] = cfg.evaluation_friction
     else:
-        env.xi[ids, 0] = torch.empty(len(ids), device=env.device).uniform_(*cfg.friction)
+        cmd.xi[ids, 0] = torch.empty(len(ids), device=env.device).uniform_(*cfg.friction)
         for axis, limits in enumerate(cfg.com_ranges):
-            env.xi[ids, cfg.com_start + axis] = torch.empty(len(ids), device=env.device).uniform_(*limits)
+            cmd.xi[ids, cfg.com_start + axis] = torch.empty(len(ids), device=env.device).uniform_(*limits)
     geoms = robot.indexing.geom_ids
-    env.sim.model.geom_friction[ids[:, None], geoms[None], 0] = env.xi[ids, :1]
-    planes = torch.as_tensor(env.sim.mj_model.geom_type == mujoco.mjtGeom.mjGEOM_PLANE, device=env.device).nonzero().flatten()
-    env.sim.model.geom_friction[ids[:, None], planes[None], 0] = cfg.evaluation_friction if env.eval_mode else cfg.friction[0]
+    env.sim.model.geom_friction[ids[:, None], geoms[None], 0] = cmd.xi[ids, :1]
+    planes = torch.as_tensor(env.sim.mj_model.geom_type == mujoco.mjtGeom.mjGEOM_PLANE,
+                             device=env.device).nonzero().flatten()
+    env.sim.model.geom_friction[ids[:, None], planes[None], 0] = cfg.evaluation_friction if cmd.cfg.play else cfg.friction[0]
     torso = int(robot.indexing.body_ids[robot.body_names.index(cfg.torso_body)])
-    env.sim.model.body_ipos[ids, torso] = env.sim.get_default_field("body_ipos")[torso] + env.xi[ids, cfg.com_start:cfg.com_start + 3]
+    env.sim.model.body_ipos[ids, torso] = env.sim.get_default_field("body_ipos")[torso] + cmd.xi[ids, cfg.com_start:cfg.com_start + 3]
 
 
-def randomize_joint_offsets(env, env_ids, cfg: PhysicalContextCfg):
-    begin, count = cfg.calibration_start, env.action.action_dim
-    env.xi[env_ids, begin:begin + count] = (
-        0.0 if env.eval_mode else torch.empty(len(env_ids), count, device=env.device).uniform_(*cfg.joint_offset)
+def randomize_joint_offsets(env, env_ids, command_name: str = "motion"):
+    cmd = env.command_manager.get_term(command_name)
+    cfg = cmd.cfg.physical_cfg
+    begin, count = cfg.calibration_start, cmd.dynamics.action_dim
+    cmd.xi[env_ids, begin:begin + count] = (
+        0.0 if cmd.cfg.play else torch.empty(len(env_ids), count, device=env.device).uniform_(*cfg.joint_offset)
     )
 
 
-def reset_robot_to_reference(env, env_ids, cfg: ReferenceResetCfg):
-    frames = env.command.time_steps[env_ids]
-    p, R, v, w, q, qd = (value.clone() for value in env.motion.ref_state(frames))
-    if env.reset_noise:
+def reset_robot_to_reference(env, env_ids, cfg: ReferenceResetCfg, *, command=None):
+    cmd = env.command_manager.get_term("motion") if command is None else command
+    frames = cmd.time_steps[env_ids]
+    p, R, v, w, q, qd = (value.clone() for value in cmd.motion.ref_state(frames))
+    if cmd.cfg.reset_noise and not cmd.cfg.play:
         def perturb(value, bounds):
             return value + (2 * torch.rand_like(value) - 1) * torch.tensor(bounds, device=env.device)
         p = perturb(p, cfg.position)
@@ -69,9 +76,9 @@ def reset_robot_to_reference(env, env_ids, cfg: ReferenceResetCfg):
         R = so3_exp(rotation) @ R
         v, w = perturb(v, cfg.linear_velocity), perturb(w, cfg.angular_velocity)
         q = q + torch.empty_like(q).uniform_(-cfg.joint_position, cfg.joint_position)
-    q = q.clamp(env.mdp.kin.q_lo, env.mdp.kin.q_hi)
+    q = q.clamp(cmd.mdp.kin.q_lo, cmd.mdp.kin.q_hi)
     pose = torch.cat((p + env.scene.env_origins[env_ids], mat_to_quat(R)), -1)
-    env.robot.write_root_link_pose_to_sim(pose, env_ids=env_ids)
-    env.robot.write_root_link_velocity_to_sim(torch.cat((v, w), -1), env_ids=env_ids)
-    env.robot.write_joint_state_to_sim(q, qd, joint_ids=env.joint_ids, env_ids=env_ids)
-    env.robot.set_joint_position_target(q, joint_ids=env.joint_ids, env_ids=env_ids)
+    cmd.robot.write_root_link_pose_to_sim(pose, env_ids=env_ids)
+    cmd.robot.write_root_link_velocity_to_sim(torch.cat((v, w), -1), env_ids=env_ids)
+    cmd.robot.write_joint_state_to_sim(q, qd, joint_ids=cmd.joint_ids, env_ids=env_ids)
+    cmd.robot.set_joint_position_target(q, joint_ids=cmd.joint_ids, env_ids=env_ids)

@@ -1,6 +1,6 @@
 # 0001: Separate task composition from simulation and differentiable learning
 
-Status: accepted
+Status: accepted; environment lifecycle and CLI placement superseded by [ADR 0002](0002-native-mjlab-entrypoints.md)
 
 ## Context
 
@@ -24,8 +24,10 @@ and imagined rollouts. Keep native simulator state/reset handling in the environ
 Task construction supplies dimensions and checkpoint metadata. Models and replay receive
 task dimensions rather than depending on training-script constants. Task state encoding,
 world-model features, regression targets, integration and losses form a single contract.
-Training and evaluation entry points are import-safe. Top-level compatibility adapters
-preserve existing callers while new code uses the package boundaries.
+Training and evaluation entry points are import-safe and live in `rl.runner` and
+`rl.evaluation`. Top-level compatibility adapters were initially retained during the
+refactor, then removed following the explicit request to clean up old entry points.
+Callers now use the package boundaries directly.
 
 Permit native object entities and contact sensors in low-level simulation configurations.
 Reject such additions through the current robot-only training factory. An object interaction

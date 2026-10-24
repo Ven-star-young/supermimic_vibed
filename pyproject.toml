@@ -26,3 +26,6 @@ dev = ["pytest>=8"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[project.entry-points."mjlab.tasks"]
+supermimic = "supermimic.tasks"

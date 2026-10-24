@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 import torch
 
-from supermimic.robot import G1_JOINT_NAMES, TRACKED_BODIES
+from supermimic.assets.g1.g1_constants import G1_JOINT_NAMES, TRACKED_BODIES
 from supermimic.rotations import mat_to_quat
 
 

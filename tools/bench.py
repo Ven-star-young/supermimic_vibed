@@ -2,11 +2,11 @@
 import os, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import torch
-from supermimic.kinematics import G1Kinematics
+from supermimic.assets.g1.kinematics import G1Kinematics
 from supermimic.motion import MotionLib
 from supermimic.mdp import MDP, flatten_state, unflatten_state, normalize_xi, OBS_DIM
-from supermimic.networks import WorldModel
-from supermimic.robot import default_joint_pos_list
+from supermimic.rl.models import WorldModel
+from supermimic.assets.g1.g1_constants import default_joint_pos_list
 torch.backends.cuda.matmul.allow_tf32 = True
 dev = "cuda:0"
 kin = G1Kinematics(dev)

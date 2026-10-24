@@ -1,327 +1,425 @@
-"""SuperMimic training (Algorithm A.1) using a task-supplied simulator and state schema.
+"""SuperMimic learner plugged into mjlab's train/play lifecycle.
 
-The learning loop remains collect -> fit world model -> BPTT policy + critic update.
-Task construction owns robot/object state layouts, MDP heads, and scene configuration.
+The CLI creates and owns the native environment. This runner only learns from that
+instance: real transitions fit the world model; imagined trajectories train policy
+and critic through BPTT. Inference allocates only the policy.
 """
 
 from __future__ import annotations
 
-import argparse
-import json
+import csv
+from dataclasses import asdict
 import math
 import os
+from pathlib import Path
 import time
+from types import SimpleNamespace
 
 import torch
 import torch.nn as nn
 
-from supermimic.tasks import get_train_cfg, load_task
 from . import models as networks
-from .config import build_train_parser
-from .models import Critic, Policy, WorldModel
+from .config import SuperMimicRunnerCfg
+from .models import Critic, Policy, TensorDictPolicy, WorldModel
 from .storage import ReplayBuffer
 
 
-def main(argv=None):
-    task_parser = argparse.ArgumentParser(add_help=False)
-    task_parser.add_argument("--task", default="g1_tracking")
-    selected, _ = task_parser.parse_known_args(argv)
-    args = build_train_parser(get_train_cfg(selected.task)).parse_args(argv)
-    run(args)
+class SuperMimicRunner:
+    """The runner interface expected by stock mjlab train and play scripts."""
 
+    def __init__(self, env, train_cfg, log_dir=None, device="cpu"):
+        self.env, self.device = env, torch.device(device)
+        self.train_cfg = asdict(SuperMimicRunnerCfg()) | dict(train_cfg)
+        self.cfg = SimpleNamespace(**self.train_cfg)
+        if int(os.environ.get("WORLD_SIZE", "1")) > 1:
+            raise ValueError("SuperMimicRunner currently supports one GPU; select a single --gpu-ids value")
+        if self.cfg.clip_actions is not None:
+            raise ValueError("SuperMimic requires clip_actions=None so replay stores the executed action")
+        command = env.unwrapped.command_manager.get_term("motion")
+        self.task = command.task
+        self.motion, self.mdp, self.dynamics = self.task.motion, self.task.mdp, self.task.dynamics
+        self.dims = self.task.dimensions
+        self.history_length, self.goal_frames = command.cfg.history_length, command.cfg.goal_frames
+        self.goal_dim = self.task.goal_dim(self.goal_frames)
+        networks.AMP_DTYPE = torch.bfloat16 if self.cfg.amp == "bf16" else None
+        self.pi = Policy(self.dims.observation, self.goal_dim, hist=self.history_length,
+                         action_dim=self.dims.action).to(self.device)
+        self.wm = self.critic = None
+        self.buffer = self.replay_env = None
+        self.log_dir = Path(log_dir) if log_dir is not None else None
+        self.current_learning_iteration, self.wall_time, self.sim_steps = 0, 0.0, 0
+        self._clock_start = None
+        self._git_repos = [__file__]
+        self._writer = self._wandb_run = None
+        self._validate_config()
 
-def run(args):
-    torch.backends.cuda.matmul.allow_tf32 = True
-    torch.backends.cudnn.allow_tf32 = True
-    torch.manual_seed(args.seed)
-    networks.AMP_DTYPE = torch.bfloat16 if args.amp == "bf16" else None
-    dev = args.device
-    os.makedirs(args.log_dir, exist_ok=True)
-    with open(os.path.join(args.log_dir, "args.json"), "w") as args_file:
-        json.dump(vars(args), args_file, indent=2)
+    def _validate_config(self):
+        positive = ("buffer_steps", "horizon", "wm_window", "wm_batches", "wm_batch", "pi_batch",
+                    "critic_epochs", "critic_minibatches", "lr_decay_iters", "log_every", "save_interval")
+        if any(getattr(self.cfg, name) < 1 for name in positive):
+            raise ValueError("Training sizes and intervals must be positive")
+        if self.cfg.buffer_steps < self.cfg.wm_window:
+            raise ValueError("buffer_steps must be at least wm_window")
+        if self.cfg.utd <= 0 or not 0 < self.cfg.gamma < 1 or not 0 <= self.cfg.lam <= 1:
+            raise ValueError("Require utd > 0, 0 < gamma < 1, and 0 <= lam <= 1")
+        if self.cfg.horizon * self.cfg.pi_batch < self.cfg.critic_minibatches:
+            raise ValueError("Imagined transitions must cover all critic minibatches")
+        if self.cfg.amp not in ("bf16", "none"):
+            raise ValueError("amp must be 'bf16' or 'none'")
 
-    task = load_task(args.task, args.motion_dir, device=dev)
-    motion, mdp, dynamics, dims = task.motion, task.mdp, task.dynamics, task.dimensions
-    K, Hh, HZ = args.goal_frames, args.hist, args.horizon
-    GOAL_DIM = task.goal_dim(K)
-    CRITIC_IN = dims.critic_features + GOAL_DIM
+    def _init_training_models(self):
+        if self.wm is not None:
+            return
+        self.task.validate_model_coverage()
+        self.wm = WorldModel(dynamics=self.dynamics).to(self.device)
+        self.critic = Critic(self.dims.critic_features + self.goal_dim).to(self.device)
+        self.opt_wm = torch.optim.Adam(self.wm.parameters(), lr=self.cfg.lr)
+        self.opt_pi = torch.optim.Adam(self.pi.parameters(), lr=self.cfg.lr, betas=(0.9, 0.95))
+        self.opt_v = torch.optim.Adam(self.critic.parameters(), lr=self.cfg.lr)
+        self.error_floor = self.dynamics.error_floor(self.device)
+        compile_fn = (lambda fn: fn) if self.cfg.no_compile else torch.compile
+        self.wm_rollout = compile_fn(self._wm_rollout)
+        self.wm_error = compile_fn(self._wm_error)
+        self.imag_step = compile_fn(self._imag_step)
+        self.reward_term = compile_fn(self._reward_term)
+        self.critic_input = compile_fn(self._critic_input)
 
-    wm = WorldModel(dynamics=dynamics).to(dev)
-    pi = Policy(dims.observation, GOAL_DIM, hist=Hh, action_dim=dims.action).to(dev)
-    critic = Critic(CRITIC_IN).to(dev)
-    opt_wm = torch.optim.Adam(wm.parameters(), lr=args.lr)
-    opt_pi = torch.optim.Adam(pi.parameters(), lr=args.lr, betas=(0.9, 0.95))
-    opt_v = torch.optim.Adam(critic.parameters(), lr=args.lr)
-    start_it, wall_offset, sim_steps = 0, 0.0, 0
-    if args.resume:
-        ck = torch.load(args.resume, map_location=dev)
-        task.validate_checkpoint(ck)
-        wm.load_state_dict(ck["wm"]), pi.load_state_dict(ck["pi"]), critic.load_state_dict(ck["critic"])
-        opt_wm.load_state_dict(ck["opt_wm"]), opt_pi.load_state_dict(ck["opt_pi"]), opt_v.load_state_dict(ck["opt_v"])
-        start_it, wall_offset, sim_steps = ck["iteration"], ck["wall_time"], ck["sim_steps"]
+    def _wm_rollout(self, states, actions, context):
+        state = self.dynamics.unpack(states[:, 0])
+        predictions = []
+        for step in range(self.cfg.wm_window):
+            state = self.wm.step(state, actions[:, step], self.dynamics.normalize_context(context[:, step]))
+            predictions.append(state)
+        return tuple(torch.stack([pred[i] for pred in predictions], 1) for i in range(len(state)))
 
+    def _wm_error(self, predicted, actual, mask):
+        scale = torch.maximum(self.wm.out_norm.std(), self.error_floor)
+        error = (self.wm.state_error(predicted, self.dynamics.unpack(actual)) / scale).square().mean(-1)
+        return (error * mask).sum() / actual.shape[0], error[:, -1]
 
-    ERR_FLOOR = dynamics.error_floor(dev)
+    def _imag_step(self, state, history, frame, context, normalized_context, goal):
+        action = self.pi(history, goal)
+        state = self.wm.step(state, action, normalized_context)
+        frame = frame + 1
+        observation = self.mdp.add_noise(self.mdp.obs(state, action, context, frame))
+        history = torch.cat((history[:, 1:], observation.unsqueeze(1)), 1)
+        return state, action, history, frame, self.motion.goal(frame, self.goal_frames)
 
-    def _wm_rollout(s, a, xi):
-        S = dynamics.unpack(s[:, 0])
-        preds = []
-        for j in range(args.wm_window):
-            S = wm.step(S, a[:, j], dynamics.normalize_context(xi[:, j]))
-            preds.append(S)
-        return tuple(torch.stack([P[i] for P in preds], 1) for i in range(len(S)))  # (B, k, ...)
+    def _reward_term(self, state, frame, action, previous_action):
+        return self.mdp.reward(state, frame, action, previous_action), self.mdp.soft_termination(state, frame)
 
+    def _critic_input(self, state, frame, normalized_context, goal):
+        return torch.cat((self.mdp.critic_features(state, frame, normalized_context), goal), -1)
 
-    def _wm_err(S_hat, s1, mask):
-        std = torch.maximum(wm.out_norm.std(), ERR_FLOOR)
-        e = (wm.state_error(S_hat, dynamics.unpack(s1)) / std) ** 2  # (B, k, D)
-        e = e.mean(-1)
-        return (e * mask).sum() / s1.shape[0], e[:, -1]
+    def _learning_rate(self, iteration):
+        phase = min(iteration / self.cfg.lr_decay_iters, 1.0)
+        return self.cfg.lr * (0.03 + 0.97 * 0.5 * (1 + math.cos(math.pi * phase)))
 
+    @torch.no_grad()
+    def collect(self, num_steps, stats):
+        env = self.replay_env
+        for _ in range(num_steps):
+            observations = self.env.get_observations()
+            history = observations["policy_history"].reshape(env.N, self.history_length, self.dims.observation)
+            goal = observations["goal"]
+            self.pi.obs_norm.update(history[:, -1])
+            self.pi.goal_norm.update(goal)
+            action = self.pi(history, goal)
+            action = (action + self.cfg.action_noise * torch.randn_like(action)).clamp(-20, 20)
+            out = env.step(action)
+            self.buffer.add(out)
+            initial, final = self.dynamics.unpack(out["s"]), self.dynamics.unpack(out["s1"])
+            self.wm.in_norm.update(self.wm.inputs(initial, out["a"], self.dynamics.normalize_context(out["xi"])))
+            self.wm.out_norm.update(self.wm.targets(initial, final))
+            self.sim_steps += env.N
+            stats["sim_rew"].append(out["r"].mean() / self.task.max_step_reward)
+            if "ep_len" in out:
+                stats["ep_len"].append(out["ep_len"].mean())
+                stats["ep_ret_norm"].append(out["ep_ret_norm"].mean())
+                stats["terminated"].append(out["term"].float().sum())
+                stats["done"].append(out["done"].float().sum())
 
-    def _imag_step(S, o_hist, a_prev, f, xi, xi_n, g):
-        a = pi(o_hist, g)
-        S1 = wm.step(S, a, xi_n)
-        f1 = f + 1
-        o1 = mdp.add_noise(mdp.obs(S1, a, xi, f1))
-        o_hist = torch.cat((o_hist[:, 1:], o1.unsqueeze(1)), 1)
-        return S1, a, o_hist, f1, motion.goal(f1, K)
-
-
-    def _reward_term(S, f, a, a_prev):
-        return mdp.reward(S, f, a, a_prev), mdp.soft_termination(S, f)
-
-
-    def _critic_input(S, f, xi_n, g):
-        return torch.cat((mdp.critic_features(S, f, xi_n), g), -1)
-
-
-    compile_fn = (lambda fn: fn) if args.no_compile else torch.compile
-    wm_rollout = compile_fn(_wm_rollout)
-    wm_err = compile_fn(_wm_err)
-    imag_step = compile_fn(_imag_step)
-    reward_term = compile_fn(_reward_term)
-    critic_input_c = compile_fn(_critic_input)
-
-
-    def lr_at(it: int) -> float:
-        if it >= args.lr_decay_iters:
-            return args.lr * 0.03
-        return args.lr * (0.03 + 0.97 * 0.5 * (1 + math.cos(math.pi * it / args.lr_decay_iters)))
-
-
-    def set_requires_grad(m: nn.Module, flag: bool):
-        for p in m.parameters():
-            p.requires_grad_(flag)
-
-
-    # ------------------------------------------------------------------------------------------------
-    def wm_update():
-        w = buffer.sample_windows(args.wm_batch, args.wm_window)
-        S_hat = wm_rollout(w["s"], w["a"], w["xi"])
-        loss, e_last = wm_err(S_hat, w["s1"], w["mask"])
-        opt_wm.zero_grad(set_to_none=True)
+    def wm_update(self):
+        window = self.buffer.sample_windows(self.cfg.wm_batch, self.cfg.wm_window)
+        predicted = self.wm_rollout(window["s"], window["a"], window["xi"])
+        loss, last_error = self.wm_error(predicted, window["s1"], window["mask"])
+        self.opt_wm.zero_grad(set_to_none=True)
         loss.backward()
-        nn.utils.clip_grad_norm_(wm.parameters(), 1.0)
-        opt_wm.step()
-        m = w["mask"][:, -1]
-        return loss.detach() / args.wm_window, (e_last.detach() * m).sum() / m.sum().clamp(min=1)
+        nn.utils.clip_grad_norm_(self.wm.parameters(), 1.0)
+        self.opt_wm.step()
+        mask = window["mask"][:, -1]
+        return loss.detach() / self.cfg.wm_window, (last_error.detach() * mask).sum() / mask.sum().clamp(min=1)
 
+    def _sample_valid_starts(self):
+        batch, starts, histories, count = self.cfg.pi_batch, [], [], 0
+        for _ in range(128):
+            start, history = self.buffer.sample_starts(2 * batch, self.history_length)
+            frame = start["f"]
+            valid = frame + self.cfg.horizon <= self.motion.clip_end[self.motion.clip_id[frame]]
+            indices = valid.nonzero(as_tuple=False).flatten()[:batch - count]
+            starts.append({key: value[indices] for key, value in start.items()})
+            histories.append({key: value[indices] for key, value in history.items()})
+            count += len(indices)
+            if count == batch:
+                concatenate = lambda records: {key: torch.cat([record[key] for record in records]) for key in records[0]}
+                return concatenate(starts), concatenate(histories)
+        raise RuntimeError("Replay has too few starts with a full imagination horizon; collect more data or shorten horizon")
 
-    def sample_valid_starts(B: int):
-        starts, hists, n = [], [], 0
-        while n < B:
-            s, h = buffer.sample_starts(2 * B, Hh)
-            f = s["f"]
-            ok = f + HZ <= motion.clip_end[motion.clip_id[f]]
-            idx = ok.nonzero(as_tuple=False).squeeze(-1)[: B - n]
-            starts.append({k: v[idx] for k, v in s.items()}), hists.append({k: v[idx] for k, v in h.items()})
-            n += len(idx)
-        cat = lambda ds: {k: torch.cat([d[k] for d in ds]) for k in ds[0]}  # noqa: E731
-        return cat(starts), cat(hists)
-
-
-    PROFILE = bool(int(os.environ.get("SM_PROFILE", "0")))
-
-
-    def policy_update():
-        if PROFILE:
-            torch.cuda.synchronize(); tq0 = time.time()
-        s, h = sample_valid_starts(args.pi_batch)
-        S = dynamics.unpack(s["s"])
-        xi, f, a_prev = s["xi"], s["f"], s["a_prev"]
-        xi_n = dynamics.normalize_context(xi)
+    def policy_update(self):
+        cfg, batch, horizon = self.cfg, self.cfg.pi_batch, self.cfg.horizon
+        start, historical = self._sample_valid_starts()
+        state = self.dynamics.unpack(start["s"])
+        context, frame, previous = start["xi"], start["f"], start["a_prev"]
+        normalized_context = self.dynamics.normalize_context(context)
         with torch.no_grad():
-            o_hist = mdp.obs(dynamics.unpack(h["s"]), h["a_prev"], h["xi"], h["f"])
-        o_hist = mdp.add_noise(o_hist)
-        set_requires_grad(wm, False)
-        set_requires_grad(critic, False)
-        B = args.pi_batch
-        g0 = motion.goal(f, K)
-        g = g0
-        S0 = S
-        Ss, As, Aps, Fs, Gs = [], [], [], [], []
-        for t in range(HZ):
-            Aps.append(a_prev)
-            S, a_prev, o_hist, f, g = imag_step(S, o_hist, a_prev, f, xi, xi_n, g)
-            Ss.append(S), As.append(a_prev), Fs.append(f), Gs.append(g)
-        flat = lambda xs: torch.stack(xs).flatten(0, 1)  # noqa: E731  (H*B, ...)
-        S_all = tuple(flat([St[i] for St in Ss]) for i in range(len(S)))
-        f_all = flat(Fs)
-        r, d = reward_term(S_all, f_all, flat(As), flat(Aps))
-        r, d = r.view(HZ, B), d.view(HZ, B)
-        alive = torch.cumprod(1 - d, 0)  # c_{t+1}
-        c_t = torch.cat((torch.ones(1, B, device=dev), alive[:-1]), 0)
-        disc = args.gamma ** torch.arange(HZ, device=dev, dtype=torch.float32).unsqueeze(-1)
-        J = (disc * c_t * r).sum(0)
-        c = alive[-1]
-        r_sum = (c_t * r).detach().sum(0)
-        rews, dones = r.detach(), d.detach()
-        if not args.no_critic:
-            J = J + (args.gamma**HZ) * c * critic(_critic_input(S, f, xi_n, g))
-        loss = -J.mean()
-        if PROFILE:
-            torch.cuda.synchronize(); tq1 = time.time()
-        opt_pi.zero_grad(set_to_none=True)
+            history = self.mdp.obs(self.dynamics.unpack(historical["s"]), historical["a_prev"],
+                                   historical["xi"], historical["f"])
+        history = self.mdp.add_noise(history)
+        self.wm.requires_grad_(False)
+        self.critic.requires_grad_(False)
+        goal = initial_goal = self.motion.goal(frame, self.goal_frames)
+        initial_state = state
+        states, actions, previous_actions, frames, goals = [], [], [], [], []
+        for _ in range(horizon):
+            previous_actions.append(previous)
+            state, previous, history, frame, goal = self.imag_step(
+                state, history, frame, context, normalized_context, goal)
+            states.append(state)
+            actions.append(previous)
+            frames.append(frame)
+            goals.append(goal)
+        flatten = lambda values: torch.stack(values).flatten(0, 1)
+        all_states = tuple(flatten([step[i] for step in states]) for i in range(len(state)))
+        rewards, terminated = self.reward_term(all_states, flatten(frames), flatten(actions), flatten(previous_actions))
+        rewards, terminated = rewards.view(horizon, batch), terminated.view(horizon, batch)
+        survival = torch.cumprod(1 - terminated, 0)
+        alive_before = torch.cat((torch.ones(1, batch, device=self.device), survival[:-1]), 0)
+        discounts = cfg.gamma ** torch.arange(horizon, device=self.device, dtype=torch.float32).unsqueeze(-1)
+        returns = (discounts * alive_before * rewards).sum(0)
+        if not cfg.no_critic:
+            returns = returns + cfg.gamma ** horizon * survival[-1] * self.critic(
+                self._critic_input(state, frame, normalized_context, goal))
+        loss = -returns.mean()
+        self.opt_pi.zero_grad(set_to_none=True)
         loss.backward()
-        if PROFILE:
-            torch.cuda.synchronize(); tq2 = time.time()
-        gn = nn.utils.clip_grad_norm_(pi.parameters(), 1.0)
-        nn.utils.clip_grad_value_(pi.parameters(), 0.1)
-        if torch.isfinite(gn):
-            opt_pi.step()
-        set_requires_grad(wm, True)
-        set_requires_grad(critic, True)
-        # ---------------- critic: GAE(lambda) targets over the imagined transitions ----------------
-        v_loss = torch.zeros(())
-        if not args.no_critic:
-            with torch.no_grad():
-                S_c = tuple(torch.cat((S0[i].unsqueeze(0), torch.stack([St[i].detach() for St in Ss])), 0).flatten(0, 1) for i in range(len(S)))
-                f_c = torch.cat((s["f"].unsqueeze(0), torch.stack(Fs)), 0).flatten()
-                g_c = torch.cat((g0.unsqueeze(0), torch.stack(Gs)), 0).flatten(0, 1)
-                xi_c = xi_n.unsqueeze(0).expand(HZ + 1, -1, -1).flatten(0, 1)
-                X = critic_input_c(S_c, f_c, xi_c, g_c).view(HZ + 1, B, -1)
-            critic.norm.update(X)
-            with torch.no_grad():
-                V = critic(X)
-                R = V[-1]
-                targets = []
-                for t in range(HZ - 1, -1, -1):
-                    R = rews[t] + args.gamma * (1 - dones[t]) * ((1 - args.lam) * V[t + 1] + args.lam * R)
-                    targets.append(R)
-                targets = torch.stack(targets[::-1])  # (H, B)
-            Xf, Yf = X[:-1].reshape(-1, X.shape[-1]), targets.reshape(-1)
-            n = Xf.shape[0]
-            mb = n // args.critic_minibatches
-            for _ in range(args.critic_epochs):
-                perm = torch.randperm(n, device=dev)
-                for i in range(args.critic_minibatches):
-                    idx = perm[i * mb : (i + 1) * mb]
-                    v_loss = ((critic(Xf[idx]) - Yf[idx]) ** 2).mean()
-                    opt_v.zero_grad(set_to_none=True)
-                    v_loss.backward()
-                    nn.utils.clip_grad_norm_(critic.parameters(), 1.0)
-                    opt_v.step()
-        if PROFILE:
-            torch.cuda.synchronize()
-            print(f"[prof] imagine fwd {1e3*(tq1-tq0):.0f} ms | bwd {1e3*(tq2-tq1):.0f} ms | critic {1e3*(time.time()-tq2):.0f} ms", flush=True)
-        return loss.detach(), v_loss.detach(), (r_sum / HZ / task.max_step_reward).mean(), gn.detach(), c.mean().detach()
+        gradnorm = nn.utils.clip_grad_norm_(self.pi.parameters(), 1.0)
+        nn.utils.clip_grad_value_(self.pi.parameters(), 0.1)
+        if torch.isfinite(gradnorm):
+            self.opt_pi.step()
+        self.wm.requires_grad_(True)
+        self.critic.requires_grad_(True)
+        value_loss = torch.zeros((), device=self.device)
+        if not cfg.no_critic:
+            value_loss = self._critic_update(start, initial_state, initial_goal, states, frames, goals,
+                                             normalized_context, rewards.detach(), terminated.detach())
+        imagined_reward = (alive_before * rewards).detach().sum(0).mean() / horizon / self.task.max_step_reward
+        return loss.detach(), value_loss.detach(), imagined_reward, gradnorm.detach(), survival[-1].mean().detach()
 
+    def _critic_update(self, start, initial_state, initial_goal, states, frames, goals, context, rewards, terminated):
+        horizon, batch = self.cfg.horizon, self.cfg.pi_batch
+        with torch.no_grad():
+            states = tuple(torch.cat((initial_state[i].unsqueeze(0), torch.stack([step[i].detach() for step in states])), 0)
+                           .flatten(0, 1) for i in range(len(initial_state)))
+            frames = torch.cat((start["f"].unsqueeze(0), torch.stack(frames)), 0).flatten()
+            goals = torch.cat((initial_goal.unsqueeze(0), torch.stack(goals)), 0).flatten(0, 1)
+            context = context.unsqueeze(0).expand(horizon + 1, -1, -1).flatten(0, 1)
+            features = self.critic_input(states, frames, context, goals).view(horizon + 1, batch, -1)
+            self.critic.norm.update(features)
+            values = self.critic(features)
+            target, targets = values[-1], []
+            for step in range(horizon - 1, -1, -1):
+                target = rewards[step] + self.cfg.gamma * (1 - terminated[step]) * (
+                    (1 - self.cfg.lam) * values[step + 1] + self.cfg.lam * target)
+                targets.append(target)
+            targets = torch.stack(targets[::-1]).reshape(-1)
+        features = features[:-1].reshape(-1, features.shape[-1])
+        for _ in range(self.cfg.critic_epochs):
+            indices = torch.randperm(len(features), device=self.device)
+            for minibatch in indices.tensor_split(self.cfg.critic_minibatches):
+                loss = (self.critic(features[minibatch]) - targets[minibatch]).square().mean()
+                self.opt_v.zero_grad(set_to_none=True)
+                loss.backward()
+                nn.utils.clip_grad_norm_(self.critic.parameters(), 1.0)
+                self.opt_v.step()
+        return loss
 
-    # ------------------------------------------------------------------------------------------------
-    with task.make_env(args.num_envs, device=dev, gamma=args.gamma) as env, \
-            open(os.path.join(args.log_dir, "train_log.csv"), "a") as log_f:
-        buffer = ReplayBuffer(args.buffer_steps, args.num_envs, dev, state_dim=dims.state,
-                              action_dim=dims.action, context_dim=dims.context)
-        obs_hist = torch.zeros(args.num_envs, Hh, dims.observation, device=dev)
+    @staticmethod
+    def _new_stats():
+        names = ("wm_loss", "wm_err8", "pi_loss", "v_loss", "imag_rew", "pi_gradnorm", "imag_survival",
+                 "sim_rew", "ep_len", "ep_ret_norm", "terminated", "done")
+        return {name: [] for name in names}
 
-        @torch.no_grad()
-        def collect(n_steps: int, stats: dict):
-            nonlocal obs_hist, sim_steps
-            for _ in range(n_steps):
-                S = env.state()
-                o = mdp.add_noise(mdp.obs(S, env.a_prev, env.xi, env.f))
-                fresh = env.ep_step == 0
-                obs_hist = torch.where(fresh[:, None, None], o.unsqueeze(1).expand_as(obs_hist), torch.cat((obs_hist[:, 1:], o.unsqueeze(1)), 1))
-                g = motion.goal(env.f, K)
-                pi.obs_norm.update(o)
-                pi.goal_norm.update(g)
-                a = pi(obs_hist, g)
-                a = torch.clamp(a + args.action_noise * torch.randn_like(a), -20, 20)
-                out = env.step(a)
-                buffer.add(out)
-                S0, S1 = dynamics.unpack(out["s"]), dynamics.unpack(out["s1"])
-                wm.in_norm.update(wm.inputs(S0, out["a"], dynamics.normalize_context(out["xi"])))
-                wm.out_norm.update(wm.targets(S0, S1))
-                sim_steps += args.num_envs
-                stats["r"].append(out["r"].mean() / task.max_step_reward)
-                if "ep_len" in out:
-                    stats["ep_len"].append(out["ep_len"].mean())
-                    stats["ep_ret"].append(out["ep_ret_norm"].mean())
-                    stats["term"].append(out["term"].float().sum())
-                    stats["done"].append(out["done"].float().sum())
+    def learn(self, num_learning_iterations, init_at_random_ep_len=False):
+        # RSI already chooses reference starting frames; randomizing episode age
+        # would misalign curriculum returns and observation-history padding.
+        del init_at_random_ep_len
+        if num_learning_iterations < 1:
+            return
+        from .vecenv import ReplayEnvAdapter
 
-        stats = {"r": [], "ep_len": [], "ep_ret": [], "term": [], "done": []}
-        if start_it == 0:
-            collect(args.warmup_steps, stats)
-        if start_it == 0:
-            log_f.write("iteration,wall_h,sim_steps,wm_loss,wm_err8,pi_loss,v_loss,imag_rew,pi_gradnorm,imag_survival,sim_rew,ep_len,ep_ret_norm,term_frac,it_per_s,lr\n")
-        t_start = time.time() - wall_offset
-        t_log = time.time()
-        step_acc = 0.0
-        agg = {"wm": [], "wm8": [], "pi": [], "v": [], "ir": [], "gn": [], "surv": []}
-        for it in range(start_it, args.iterations):
-            lr = lr_at(it)
-            for o in (opt_wm, opt_pi, opt_v):
-                for gparam in o.param_groups:
-                    gparam["lr"] = lr
-            step_acc += 1.0 / args.utd
-            n = int(step_acc)
-            step_acc -= n
-            prof = PROFILE and it % 20 == 0 and it > args.wm_only_iters + 5
-            if prof:
-                torch.cuda.synchronize(); tp0 = time.time()
-            collect(n, stats)
-            if prof:
-                torch.cuda.synchronize(); tp1 = time.time()
-            for _ in range(args.wm_batches):
-                l, e8 = wm_update()
-            if prof:
-                torch.cuda.synchronize(); tp2 = time.time()
-            agg["wm"].append(l), agg["wm8"].append(e8)
-            if it >= args.wm_only_iters:
-                pl, vl, ir, gn, surv = policy_update()
-                if prof:
-                    torch.cuda.synchronize(); tp3 = time.time()
-                    print(f"[prof] collect {1e3*(tp1-tp0):.0f} ms ({n} steps) | wm {1e3*(tp2-tp1):.0f} ms | policy+critic {1e3*(tp3-tp2):.0f} ms", flush=True)
-                agg["pi"].append(pl), agg["v"].append(vl), agg["ir"].append(ir), agg["gn"].append(gn), agg["surv"].append(surv)
-            if (it + 1) % args.log_every == 0:
-                mean = lambda x: float(sum(float(v) for v in x) / max(len(x), 1))  # noqa: E731
-                ips = args.log_every / (time.time() - t_log)
-                t_log = time.time()
-                wall_h = (time.time() - t_start) / 3600
-                term_frac = float(sum(float(v) for v in stats["term"]) / max(sum(float(v) for v in stats["done"]), 1))
-                row = [it + 1, wall_h, sim_steps, mean(agg["wm"]), mean(agg["wm8"]), mean(agg["pi"]), mean(agg["v"]), mean(agg["ir"]),
-                       mean(agg["gn"]), mean(agg["surv"]), mean(stats["r"]), mean(stats["ep_len"]), mean(stats["ep_ret"]), term_frac, ips, lr]  # fmt: skip
-                log_f.write(",".join(f"{x:.6g}" if isinstance(x, float) else str(x) for x in row) + "\n")
-                log_f.flush()
-                print(f"it {it + 1} | {wall_h:.3f} h | wm {row[3]:.4f} e8 {row[4]:.4f} | pi {row[5]:.3f} v {row[6]:.4f} imag_r {row[7]:.3f} surv {row[9]:.3f} "
-                      f"| sim_r {row[10]:.3f} ep_len {row[11]:.1f} ep_ret {row[12]:.3f} term {term_frac:.2f} | {ips:.2f} it/s", flush=True)  # fmt: skip
-                stats = {k: [] for k in stats}
-                agg = {k: [] for k in agg}
-            if (it + 1) % args.ckpt_every == 0 or it + 1 == args.iterations:
-                ck = {"wm": wm.state_dict(), "pi": pi.state_dict(), "critic": critic.state_dict(), "opt_wm": opt_wm.state_dict(),
-                      "opt_pi": opt_pi.state_dict(), "opt_v": opt_v.state_dict(), "iteration": it + 1,
-                      "wall_time": time.time() - t_start, "sim_steps": sim_steps, "args": vars(args), "task": task.checkpoint_metadata(),
-                      "saved_at": time.strftime("%Y-%m-%d %H:%M:%S")}  # fmt: skip
-                last = os.path.join(args.log_dir, "last.pt")
-                torch.save(ck, last + ".tmp")
-                os.replace(last + ".tmp", last)
-                small = {k: ck[k] for k in ("pi", "wm", "iteration", "wall_time", "sim_steps", "args", "saved_at", "task")}
-                path = os.path.join(args.log_dir, f"ckpt_{it + 1:06d}.pt")
-                torch.save(small, path + ".tmp")
-                os.replace(path + ".tmp", path)
+        self._init_training_models()
+        self.replay_env = ReplayEnvAdapter(self.env, gamma=self.cfg.gamma)
+        self.buffer = ReplayBuffer(self.cfg.buffer_steps, self.replay_env.N, self.device,
+                                   state_dim=self.dims.state, action_dim=self.dims.action, context_dim=self.dims.context)
+        self.pi.train()
+        self._open_logging()
+        self._clock_start = time.monotonic() - self.wall_time
+        stats = self._new_stats()
+        step_accumulator = 0.0
+        start_iteration = self.current_learning_iteration
+        end_iteration = start_iteration + num_learning_iterations
+        last_log_iteration, last_log_time = start_iteration, time.monotonic()
+        try:
+            # Replay is intentionally not checkpointed: every fresh or resumed
+            # run must refill enough real transitions before sampling windows.
+            self.collect(max(self.cfg.warmup_steps, self.cfg.wm_window), stats)
+            for iteration in range(start_iteration, end_iteration):
+                lr = self._learning_rate(iteration)
+                for optimizer in (self.opt_wm, self.opt_pi, self.opt_v):
+                    for group in optimizer.param_groups:
+                        group["lr"] = lr
+                step_accumulator += 1 / self.cfg.utd
+                steps = int(step_accumulator)
+                step_accumulator -= steps
+                self.collect(steps, stats)
+                for _ in range(self.cfg.wm_batches):
+                    model_loss, last_error = self.wm_update()
+                stats["wm_loss"].append(model_loss)
+                stats["wm_err8"].append(last_error)
+                if iteration >= self.cfg.wm_only_iters:
+                    results = self.policy_update()
+                    for name, value in zip(("pi_loss", "v_loss", "imag_rew", "pi_gradnorm", "imag_survival"), results):
+                        stats[name].append(value)
+                self.current_learning_iteration = iteration + 1
+                self.wall_time = time.monotonic() - self._clock_start
+                if self.current_learning_iteration % self.cfg.log_every == 0 or self.current_learning_iteration == end_iteration:
+                    now = time.monotonic()
+                    rate = (self.current_learning_iteration - last_log_iteration) / (now - last_log_time)
+                    self._log(stats, lr, rate)
+                    stats = self._new_stats()
+                    last_log_iteration, last_log_time = self.current_learning_iteration, now
+                if self.log_dir is not None and (self.current_learning_iteration % self.cfg.save_interval == 0
+                                                or self.current_learning_iteration == end_iteration):
+                    self.save(self.log_dir / f"model_{self.current_learning_iteration}.pt")
+        finally:
+            self.wall_time = time.monotonic() - self._clock_start
+            self._clock_start = None
+            if self._writer is not None:
+                self._writer.close()
+                self._writer = None
+            if self._wandb_run is not None:
+                self._wandb_run.finish()
+                self._wandb_run = None
 
+    def save(self, path, infos=None):
+        self._init_training_models()
+        checkpoint = {"pi": self.pi.state_dict(), "wm": self.wm.state_dict(), "critic": self.critic.state_dict(),
+                      "opt_wm": self.opt_wm.state_dict(), "opt_pi": self.opt_pi.state_dict(), "opt_v": self.opt_v.state_dict(),
+                      "iteration": self.current_learning_iteration, "wall_time": self.wall_time, "sim_steps": self.sim_steps,
+                      "train_cfg": self.train_cfg, "policy_config": self.policy_config,
+                      "task": self.task.checkpoint_metadata(), "infos": infos,
+                      "saved_at": time.strftime("%Y-%m-%d %H:%M:%S")}
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(path.suffix + ".tmp")
+        torch.save(checkpoint, temporary)
+        os.replace(temporary, path)
+        if self._wandb_run is not None and self.cfg.upload_model:
+            self._wandb_run.save(str(path), base_path=str(self.log_dir))
 
-if __name__ == "__main__":
-    main()
+    @property
+    def policy_config(self):
+        return {"history_length": self.history_length, "goal_frames": self.goal_frames, "amp": self.cfg.amp}
+
+    def load(self, path, load_cfg=None, strict=True, map_location=None):
+        actor_only = load_cfg == {"actor": True}
+        if load_cfg is not None and not actor_only:
+            raise ValueError("Supported load_cfg values: None (resume all) or {'actor': True} (inference)")
+        # Load on CPU for inference: a full training checkpoint also contains large
+        # world-model/optimizer tensors that should not occupy the play GPU.
+        location = "cpu" if actor_only else (map_location or "cpu")
+        checkpoint = torch.load(path, map_location=location, weights_only=False)
+        self.task.validate_checkpoint(checkpoint)
+        legacy_args = checkpoint.get("args", {})
+        policy_cfg = checkpoint.get("policy_config", {"history_length": legacy_args.get("hist", 10),
+                                                       "goal_frames": legacy_args.get("goal_frames", 10),
+                                                       "amp": legacy_args.get("amp", "bf16")})
+        for key in ("history_length", "goal_frames"):
+            if policy_cfg[key] != self.policy_config[key]:
+                raise ValueError(f"Checkpoint {key}={policy_cfg[key]} does not match environment {self.policy_config[key]}")
+        self.pi.load_state_dict(checkpoint["pi"], strict=strict)
+        amp = policy_cfg.get("amp") if actor_only else self.cfg.amp
+        networks.AMP_DTYPE = torch.bfloat16 if amp == "bf16" else None
+        if not actor_only:
+            self._init_training_models()
+            for key, module in (("wm", self.wm), ("critic", self.critic), ("opt_wm", self.opt_wm),
+                                ("opt_pi", self.opt_pi), ("opt_v", self.opt_v)):
+                if key not in checkpoint:
+                    raise ValueError(f"Checkpoint lacks {key!r}; use a full training checkpoint to resume")
+                if isinstance(module, nn.Module):
+                    module.load_state_dict(checkpoint[key], strict=strict)
+                else:
+                    module.load_state_dict(checkpoint[key])
+            self.current_learning_iteration = checkpoint.get("iteration", 0)
+            self.wall_time = checkpoint.get("wall_time", 0.0)
+            self.sim_steps = checkpoint.get("sim_steps", 0)
+        return checkpoint.get("infos")
+
+    def get_inference_policy(self, device=None):
+        self.pi.eval()
+        if device is not None:
+            self.pi.to(device)
+        return TensorDictPolicy(self.pi)
+
+    def add_git_repo_to_log(self, repo_file_path):
+        self._git_repos.append(repo_file_path)
+
+    def _open_logging(self):
+        if self.log_dir is None:
+            return
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        if self.cfg.logger == "tensorboard":
+            from torch.utils.tensorboard import SummaryWriter
+            self._writer = SummaryWriter(str(self.log_dir))
+        elif self.cfg.logger == "wandb":
+            import wandb
+            self._wandb_run = wandb.init(project=self.cfg.wandb_project, dir=str(self.log_dir),
+                                         name=self.log_dir.name, config=self.train_cfg,
+                                         tags=list(self.cfg.wandb_tags))
+        else:
+            raise ValueError(f"Unsupported logger: {self.cfg.logger}")
+        import git
+        for source in self._git_repos:
+            try:
+                repo = git.Repo(source, search_parent_directories=True)
+            except (git.InvalidGitRepositoryError, git.NoSuchPathError):
+                continue
+            destination = self.log_dir / "git" / f"{Path(repo.working_dir).name}.diff"
+            destination.parent.mkdir(exist_ok=True)
+            destination.write_text(f"commit: {repo.head.commit.hexsha}\n{repo.git.status()}\n{repo.git.diff('HEAD')}")
+
+    def _log(self, stats, lr, rate):
+        mean = lambda values: sum(float(value) for value in values) / max(len(values), 1)
+        row = {"iteration": self.current_learning_iteration, "wall_h": self.wall_time / 3600,
+               "sim_steps": self.sim_steps}
+        row.update({name: mean(values) for name, values in stats.items() if name not in ("terminated", "done")})
+        row.update(term_frac=sum(float(x) for x in stats["terminated"]) / max(sum(float(x) for x in stats["done"]), 1),
+                   it_per_s=rate, lr=lr)
+        if self.log_dir is not None:
+            path = self.log_dir / "train_log.csv"
+            write_header = not path.exists() or path.stat().st_size == 0
+            with path.open("a", newline="") as stream:
+                writer = csv.DictWriter(stream, fieldnames=list(row))
+                if write_header:
+                    writer.writeheader()
+                writer.writerow(row)
+        if self._writer is not None:
+            for key, value in row.items():
+                self._writer.add_scalar(key, value, self.current_learning_iteration)
+            self._writer.flush()
+        if self._wandb_run is not None:
+            self._wandb_run.log(row, step=self.current_learning_iteration)
+        print(f"it {self.current_learning_iteration} | {row['wall_h']:.3f} h | wm {row['wm_loss']:.4f} "
+              f"e8 {row['wm_err8']:.4f} | pi {row['pi_loss']:.3f} v {row['v_loss']:.4f} "
+              f"imag_r {row['imag_rew']:.3f} surv {row['imag_survival']:.3f} | sim_r {row['sim_rew']:.3f} "
+              f"ep_len {row['ep_len']:.1f} ep_ret {row['ep_ret_norm']:.3f} | {rate:.2f} it/s", flush=True)

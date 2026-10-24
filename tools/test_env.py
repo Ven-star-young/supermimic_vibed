@@ -1,4 +1,4 @@
-"""Check mjlab state round-trip, FK, and reference playback (no Isaac launcher)."""
+"""Check native mjlab state round-trip, FK and reference playback."""
 
 import argparse
 from pathlib import Path
@@ -8,12 +8,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import torch
 
-from supermimic.env import TrackingSim
-from supermimic.kinematics import G1Kinematics
-from supermimic.mdp import MDP
-from supermimic.robot import TRACKED_BODIES, default_joint_pos_list
+from supermimic.assets.g1.g1_constants import TRACKED_BODIES, action_scale, G1_JOINT_NAMES
 from supermimic.rotations import quat_to_mat
-from tools._smoke import load_motion
+from tools._smoke import native_env, reset_frames
 
 
 def main():
@@ -23,38 +20,35 @@ def main():
     parser.add_argument("--motion_dir", help="Optional LAFAN1 CSV directory; default: synthetic motion")
     parser.add_argument("--steps", type=int, default=32)
     args = parser.parse_args()
-    kin = G1Kinematics(args.device)
-    motion = load_motion(kin, args.device, args.motion_dir)
-    mdp = MDP(kin, motion, torch.tensor(default_joint_pos_list(), device=args.device))
-    with TrackingSim(args.num_envs, motion, mdp, device=args.device, eval_mode=True) as env:
+    with native_env(args.num_envs, device=args.device, motion_dir=args.motion_dir) as env:
+        cmd = env.command_manager.get_term("motion")
         ids = torch.arange(args.num_envs, device=args.device)
-        frames = motion.clip_start[ids % len(motion.names)]
-        env.reset(ids, frames)
-        state = env.state()
-        for name, actual, expected in zip(("p", "R", "v", "w", "q", "qd"), state, motion.ref_state(frames)):
+        frames = cmd.motion.clip_start[ids % len(cmd.motion.names)]
+        reset_frames(env, frames)
+        state = cmd.state()
+        for name, actual, expected in zip(("p", "R", "v", "w", "q", "qd"), state, cmd.motion.ref_state(frames)):
             torch.testing.assert_close(actual, expected, atol=2e-5, rtol=2e-5)
             print(f"roundtrip {name}: max error {(actual - expected).abs().max().item():.2e}")
-        body_ids = [env.robot.body_names.index(name) for name in TRACKED_BODIES]
-        data = env.robot.data
+        body_ids = [cmd.robot.body_names.index(name) for name in TRACKED_BODIES]
+        data = cmd.robot.data
         expected_fk = (
             data.body_link_pos_w[:, body_ids] - env.scene.env_origins[:, None],
             quat_to_mat(data.body_link_quat_w[:, body_ids]),
             data.body_link_lin_vel_w[:, body_ids],
             data.body_link_ang_vel_w[:, body_ids],
         )
-        for name, actual, expected in zip(("position", "rotation", "linear velocity", "angular velocity"), kin.forward(*state), expected_fk):
+        for name, actual, expected in zip(("position", "rotation", "linear velocity", "angular velocity"), cmd.mdp.kin.forward(*state), expected_fk):
             torch.testing.assert_close(actual, expected, atol=2e-4, rtol=2e-4)
             print(f"FK {name}: max error {(actual - expected).abs().max().item():.2e}")
+        scale = torch.tensor([action_scale(name) for name in G1_JOINT_NAMES], device=args.device)
         for step in range(args.steps):
-            f1 = torch.minimum(env.f + 1, motion.clip_end[motion.clip_id[env.f]])
-            action = (motion.q[f1] - env.default_q) / env.alpha
-            result = env.step(action)
-            assert torch.isfinite(result["s1"]).all()
-            assert torch.isfinite(result["r"]).all()
+            f1 = torch.minimum(cmd.time_steps + 1, cmd.motion.clip_end[cmd.motion.clip_id[cmd.time_steps]])
+            action = (cmd.motion.q[f1] - cmd.mdp.default_q) / scale
+            _, reward, terminated, _, _ = env.step(action)
+            assert all(torch.isfinite(value).all() for value in cmd.state())
+            assert torch.isfinite(reward).all()
             if step % 10 == 0 or step == args.steps - 1:
-                print(f"step {step}: normalized reward {result['r'].mean().item() / 0.1:.4f}, failed fraction {env.failed_eval.float().mean().item():.3f}")
-            if env.done_eval.all():
-                break
+                print(f"step {step}: normalized reward {reward.mean().item() / cmd.task.max_step_reward:.4f}, terminated fraction {terminated.float().mean().item():.3f}")
     print("mjlab environment checks passed")
 
 

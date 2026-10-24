@@ -46,7 +46,10 @@ class MDP:
         return self.cfg.max_step_reward(self.control_dt)
 
     def obs(self, S, a_prev, xi, f) -> torch.Tensor:
-        return proprioception(S, a_prev, xi, self.motion.root_R[f], self.default_q, self.observation_cfg)
+        # Keep the task-head call signature shared with other tasks, but the
+        # actor's proprioception must not depend on reference frame or attitude.
+        del f
+        return proprioception(S, a_prev, xi, self.default_q)
 
     def add_noise(self, o: torch.Tensor) -> torch.Tensor:
         return add_observation_noise(o, self.obs_noise)

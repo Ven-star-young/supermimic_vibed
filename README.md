@@ -22,14 +22,13 @@ Original implementation: **Chong Zhang** (ETH Zurich). Code license: [MIT](LICEN
 | Path | Purpose |
 |---|---|
 | `pyproject.toml`, `uv.lock` | Native Python package and locked runtime dependencies |
-| `supermimic/assets/g1/` | G1 MJCF, mjlab entity, actuator settings and joint ordering |
+| `supermimic/assets/g1/` | G1 MJCF, mjlab entity, actuator settings, joint ordering and differentiable forward kinematics |
 | `supermimic/tasks/g1_tracking/` | Current task's scene, simulation, MDP and learning configuration |
-| `supermimic/tasks/` | Task registration, dimensions, environment construction and checkpoint contract |
-| `supermimic/envs/` | Native mjlab lifecycle, state reads, stepping and terminal-transition handling |
+| `supermimic/tasks/` | Native mjlab task registration, dimensions and checkpoint contract |
 | `supermimic/mdp/` | Commands, actions, events, observations, rewards, termination and state/dynamics functions |
-| `supermimic/motion.py`, `kinematics.py` | Motion loading, resampling and differentiable forward kinematics |
-| `supermimic/rl/` | World model, replay, imagined BPTT policy updates, critic and evaluation |
-| `supermimic/train.py`, `evaluate.py` | Import-safe command-line entry points |
+| `supermimic/motion.py` | Motion loading and resampling |
+| `supermimic/rl/` | Runner, replay adapter, world model, imagined BPTT updates and critic |
+| `supermimic/scripts/evaluate.py` | Full motion-library scoring and trajectory recording |
 | `tools/` | Setup, data download, URDF-to-MJCF conversion, checks, plotting and rendering |
 | `docker/` | Optional plain Python/uv container; no simulator SDK image |
 | `data/` | Downloaded motions and G1 assets; not tracked |
@@ -48,60 +47,51 @@ tools/download_data.sh         # downloads motions/assets and creates the MJCF
 uv run python -c "import torch; print(torch.cuda.is_available(), torch.version.cuda)"
 ```
 
-A CUDA GPU is required for batched mjlab simulation. The default training configuration uses
-4096 environments and a large replay buffer; reduce `--num_envs`, `--buffer_steps`,
-`--wm_batch`, and `--pi_batch` when checking the runtime on a smaller GPU.
+A CUDA GPU is required for batched mjlab simulation. Default training uses 4096 worlds
+and a large replay buffer. On a smaller GPU, reduce `--env.scene.num-envs`,
+`--agent.buffer-steps`, `--agent.wm-batch` and `--agent.pi-batch`.
 
-Physics uses 50 Hz control and four 5 ms MuJoCo-Warp simulation steps per action. The native
-scene owns the ground and a G1 entity; mjlab position actuators apply the same joint PD
-parameters and action scaling as the previous implementation. `TrackingSim` owns simulation
-creation and cleanup, with no global application launcher:
+The package registers **`Mjlab-SuperMimic-Tracking-Unitree-G1`** with mjlab through
+`[project.entry-points."mjlab.tasks"]`. As in HDMI, the stock `train` and `play`
+commands create an ordinary `ManagerBasedRlEnv`; no project launcher or custom
+simulation loop is involved. `SuperMimicRunner` implements the framework's runner
+interface while retaining SuperMimic's learned dynamics and BPTT algorithm.
 
-```python
-from supermimic.tasks import load_task
+```text
+mjlab train TASK
+  → registered env/agent configuration
+  → ManagerBasedRlEnv → motion/action/observation/reward/event managers
+  → SuperMimicRunner.learn()
+      → physical collection → replay → world-model fitting
+      → imagined rollouts → BPTT policy update → critic fitting
+      → checkpoint
 
-task = load_task("g1_tracking", motion_dir="data/lafan1_g1", device="cuda:0")
-with task.make_env(num_envs, device="cuda:0", gamma=0.99) as env:
-    transition = env.step(action)
+mjlab play TASK → checkpoint policy → native viewer
+scripts.evaluate → checkpoint policy → complete-clip scores / recorded trajectories
 ```
 
-The structure follows HDMI's `assets / tasks / mdp / rl` boundaries. Task configuration
-assembles the scene and the analytic MDP heads used by both physical simulation and imagined
-rollouts. Learning remains SuperMimic's differentiable world-model method. Existing imports
-such as `supermimic.env.TrackingSim`, `supermimic.robot`, `supermimic.networks` and
-`supermimic.buffer` remain compatibility entry points; new code should use their package
-locations. See [CONTEXT.md](CONTEXT.md) for the state and transition contracts and
-[the architecture decision](docs/adr/0001-task-and-dynamics-boundaries.md) for the rationale.
+Physics uses 50 Hz control and four 5 ms MuJoCo-Warp steps per action. Training's
+replay adapter copies terminal transitions before resetting ended worlds; `play`
+uses native auto-reset. Real and imagined trajectories share the same tensor
+observation, reward and termination heads. See [CONTEXT.md](CONTEXT.md) and
+[ADR 0002](docs/adr/0002-native-mjlab-entrypoints.md) for the contracts and timing.
 
 ### Extending toward object interaction
 
-Scene composition lives in `tasks/g1_tracking/env_cfgs.py`: a new task can add native mjlab
-`EntityCfg` objects to `cfg.scene.entities` and `ContactSensorCfg` instances to
-`cfg.scene.sensors`, as HDMI does for its suitcase. The low-level `TrackingSim(..., cfg=cfg)`
-path supports this composition for simulation experiments.
+Add assets to a new task's `cfg.scene.entities` and native `ContactSensorCfg`
+instances to `cfg.scene.sensors`. Ordinary mjlab environments support these scenes;
+the robot-only replay adapter rejects training when unmodeled entities are present.
+Object-conditioned training additionally requires:
 
-Object-conditioned **training is not implemented by adding an entity alone**. The current
-G1 learned state contains only the robot. Its task factory rejects additional entities to
-prevent collecting transitions whose object dynamics are invisible to the world model.
-To train an interaction task:
+1. Object reference data, state layout, dynamics features/integration/losses and schema.
+2. Goals, observations, context, reset behavior and critic inputs for robot and object.
+3. Shared rewards and hard/soft termination. Contact-dependent imagined rewards need
+   a differentiable predictor or approximation; real sensors alone cannot supply it.
+4. Checks of terminal transitions, partial resets, model fitting and reward gradients.
 
-1. Add the object's asset and a separate task configuration; keep G1 tracking as a baseline.
-2. Define the task state, flatten/unflatten layout, dynamics features, predicted increments
-   and losses for both robot and object; update dimensions and the checkpoint contract.
-3. Add object/contact references to the motion command and encode the required goals,
-   observations, context and critic inputs.
-4. Define rewards and hard/soft termination consistently for physical and imagined states.
-   Contact sensors provide real training targets; imagined contact-dependent rewards need
-   a differentiable predictor or analytic approximation.
-5. Add object initialization/reset behavior, then verify physical transitions, partial reset,
-   model fitting and reward gradients before running policy training.
-
-Native object/contact integration tests validate the simulation boundary; they do not claim
-that a policy can already learn object manipulation.
-
-mjlab's `BuiltinPositionActuatorCfg` preserves the joint torque caps, but has no equivalent
-to Isaac Lab's `velocity_limit_sim`. Motor speed limits remain metadata rather than a
-solver-enforced clamp, so the two backends are not physically identical.
+`BuiltinPositionActuatorCfg` preserves torque caps but has no equivalent to Isaac
+Lab's `velocity_limit_sim`. Motor speed limits remain metadata rather than a
+solver-enforced clamp, so the backends are not physically identical.
 
 ### Data and robot assets
 
@@ -150,53 +140,68 @@ uv run pytest
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest
 ```
 
-The migration was checked on an RTX 4070 Laptop GPU: ten CPU/CUDA regression cases passed,
-and a three-iteration run on one real LAFAN1 walking clip exercised simulation collection,
-world-model fitting, BPTT policy/critic updates, checkpoint reload and evaluation recording.
-This short check used reduced batches and `--no_compile`; it is not a trained policy benchmark.
+The regression suite covers native task registration, import safety, integrated-state
+reward timing, terminal transitions, partial resets and policy histories, randomization,
+object/contact scene composition and gradients through the world model. Small runtime
+checks validate software behavior; they are not trained-policy performance evidence.
 
-The subsequent modular refactor passes **25 CPU/CUDA regression cases**, including those
-original ten. Added checks cover import safety, independent task configurations, task-sized
-replay/models, checkpoint layout validation, reward gradients through the world model and a
-native free box with a contact sensor. The box test also confirms that configured reward
-terms agree between physical transitions and the shared analytic head, and partial resets
-preserve other worlds' contact histories. Event regressions verify that replay captures
-velocity changes made by step and interval events.
+The native-entrypoint migration passed 30 CPU/CUDA tests on an RTX 4070 Laptop GPU.
+The unmodified mjlab `train` command also completed a three-iteration real walking-clip
+check and resumed from iteration 3 to 4 with replay refilling. The saved policy loaded
+in stock `play` (Viser), and the quantitative evaluator wrote scores and a trajectory.
+These small runs used reduced batches and disabled compilation.
 
-## Training and evaluation
+## Training, play and quantitative evaluation
 
 ```bash
-# Foreground training, with stdout saved under logs/lafan1_mjlab/.
-./run_train.sh lafan1_mjlab --device cuda:0
+# The stock mjlab entry point owns GPU selection and the timestamped log directory.
+uv run train Mjlab-SuperMimic-Tracking-Unitree-G1 \
+  --env.commands.motion.motion-dir data/lafan1_g1 \
+  --gpu-ids '[0]' --log-root logs --agent.experiment-name lafan1_mjlab
 
-# Equivalent direct entry point.
-uv run python -m supermimic.train --log_dir logs/lafan1_mjlab --device cuda:0
+# Convenience alias; extra arguments are passed unchanged to mjlab train.
+./run_train.sh lafan1_mjlab --gpu-ids '[0]'
+CPUS=0-23 ./run_train.sh lafan1_mjlab --gpu-ids '[0]'
 
-# Optional CPU affinity; start in a tmux session yourself if desired.
-CPUS=0-23 ./run_train.sh lafan1_mjlab --device cuda:0
+# Use the run directory printed by train.
+RUN_DIR=logs/lafan1_mjlab/YOUR_RUN_DIRECTORY
 
-# Score a checkpoint after training (replace the path with an existing checkpoint).
-uv run python -m supermimic.evaluate --run_dir logs/lafan1_mjlab \
-  --ckpt logs/lafan1_mjlab/ckpt_014000.pt --device cuda:0
+# Interactively view a saved policy.
+# For other datasets, prefix play with SUPERMIMIC_MOTION_DIR=/path/to/csvs.
+uv run play Mjlab-SuperMimic-Tracking-Unitree-G1 \
+  --checkpoint-file "$RUN_DIR/model_14000.pt"
 
-# Plot, record trajectories, and render a clip.
-uv run python tools/plot.py logs/lafan1_mjlab --out results/mjlab_curve.png
-uv run python -m supermimic.evaluate --run_dir logs/lafan1_mjlab \
-  --ckpt logs/lafan1_mjlab/ckpt_014000.pt --record traj.npz --device cuda:0
+# Score every clip deterministically after training.
+uv run python -m supermimic.scripts.evaluate \
+  --task Mjlab-SuperMimic-Tracking-Unitree-G1 \
+  --run-dir "$RUN_DIR" \
+  --checkpoint-file "$RUN_DIR/model_14000.pt" --device cuda:0
+
+# Record and render the physical evaluation trajectory.
+uv run python -m supermimic.scripts.evaluate \
+  --run-dir "$RUN_DIR" \
+  --checkpoint-file "$RUN_DIR/model_14000.pt" --record traj.npz
 uv run python tools/render.py traj.npz out.mp4 --clips dance2_subject1 --seconds 10
 ```
 
-The first iterations include `torch.compile` kernel compilation. Checkpoints default to every
-2000 iterations. `--watch` is available for continuous evaluation, but evaluate after training
-or on a separate GPU when measuring training time. The launcher now runs locally in the
-foreground and preserves individual command-line arguments; it no longer starts Docker/tmux.
-For a short runtime check, `--no_compile` disables compilation overhead; it is not the
-configuration to use when comparing training throughput.
+Native mjlab stores runs under `log_root/experiment_name/<timestamp>[_run_name]`.
+Checkpoints are `model_<iteration>.pt`; each contains policy, world model, critic,
+optimizer state and task metadata. `params/env.yaml` and `params/agent.yaml` record
+resolved configuration. Resuming uses standard `--agent.resume True`, `--agent.load-run`
+and `--agent.load-checkpoint`; replay is refilled before any resumed model updates.
 
-The default optimizer and network configuration still follows the original implementation:
-4096 environments, 1000 replay steps/environment, 8-step model fitting, 32-step imagination,
-10 model batches of 2048 windows, 4096 imagined rollouts, 500 model-only warm-up iterations,
-and BF16 MLP autocast. Use `--amp none` to disable BF16; TF32 remains enabled for FP32 matmuls.
+Use `uv run train Mjlab-SuperMimic-Tracking-Unitree-G1 --help` for all native options.
+The first iterations include compilation; `--agent.no-compile True` is useful for short
+checks. Default batches remain 4096 environments, 1000 replay steps per world,
+8-step model fitting, 32-step imagination, 10 model batches of 2048 windows,
+4096 imagined rollouts and 500 world-model-only iterations. `--agent.amp none`
+disables BF16; TF32 remains enabled for FP32 matmuls. Training is single-GPU.
+
+Quantitative evaluation starts each clip at its first frame, disables randomization
+and observation/action noise, and scores until the first failure or clip completion.
+It evaluates every clip in the selected directory; no train/test split is inferred.
+It loads the policy only, without training replay or optimizers. `--watch` scans for
+new checkpoints; use a separate GPU or evaluate after training for timing comparisons.
 
 ### Optional Docker
 
@@ -208,7 +213,7 @@ docker build -f docker/Dockerfile -t supermimic:mjlab .
 docker/run_container.sh 0 128g
 # The repository is mounted; the container's environment lives separately at /opt/venv.
 docker exec supermimic tools/download_data.sh
-docker exec -it supermimic ./run_train.sh lafan1_mjlab --device cuda:0
+docker exec -it supermimic ./run_train.sh lafan1_mjlab --gpu-ids 0
 ```
 
 This path requires Docker and NVIDIA Container Toolkit. GPU index `0` inside the container
@@ -220,7 +225,11 @@ refers to the GPU selected by `docker/run_container.sh`.
   motor armatures and action scale `0.25 * torque_limit / stiffness`.
 * Motion library: 30 to 50 Hz resampling, finite-difference velocities, FK of 14 tracked
   bodies, and 1 s sampling bins.
-* Ten-frame observation history, ten future reference frames, analytic tracking rewards,
+* Paper Table A.1's 93-dimensional proprioceptive observation: 29 joint positions,
+  29 joint velocities, 3 base angular velocities, 3 projected-gravity components and
+  29 previous actions. Ten frames give a 930-dimensional history. Reference-relative
+  root orientation is not part of this actor observation.
+* Ten future reference frames, analytic tracking rewards,
   no self-collision reward, joint-limit weight −2; hard termination at root height error
   above 0.25 m or projected-gravity z difference above 0.8.
 * Return-based reset sampling: 50% uniform, 40% softmax of negative bin return, and 10%
@@ -235,14 +244,25 @@ refers to the GPU selected by `docker/run_container.sh`.
   no observation/action noise and deterministic actions. A failure uses the training
   termination conditions; normalized return also reflects tracking accuracy.
 
-This simulator migration preserves existing method choices rather than resolving all
-paper differences. In particular, actor observations include an extra six-dimensional
-relative reference-root rotation; BF16 differs from the paper's TF32; physical self-collisions
-are disabled; analytic termination uses sigmoid smoothing; and 500 world-model-only warm-up
-iterations precede policy updates. Friction and torso CoM are sampled once per environment,
+The observation definition now follows Appendix A, Table A.1 of the
+[paper v1](https://arxiv.org/pdf/2610.28480v1#page=13). The earlier implementation's extra
+six-dimensional reference-relative root rotation and its noise/configuration option
+have been removed. This changes the policy decoder input to `930 + 32 = 962` values.
+Root orientation tracking reward remains: it is explicitly part of Table A.2, with
+weight 0.5 and scale 0.4. Body orientation tracking and tilt-based failure tests also
+remain. The critic retains its privileged reference-relative orientation feature;
+Table A.1 defines the actor observation, not the critic's feature encoding.
+
+Other implementation choices remain independently specified. The goal is still
+73 values per future frame (730 for ten frames); the paper does not fully specify
+this encoding, so its exact correspondence to the authors' implementation is unverified.
+BF16 differs from the paper's TF32; physical self-collisions are disabled; analytic
+termination uses sigmoid smoothing; and 500 world-model-only warm-up iterations
+precede policy updates. Friction and torso CoM are sampled once per environment,
 while joint offsets are sampled on reset. Training episodes end after 10 s or at clip end;
 evaluation uses the complete clip. These choices need controlled ablations before claiming
-strict paper reproduction.
+strict paper reproduction. See [ADR 0003](docs/adr/0003-paper-observation-contract.md)
+for the observation change and checkpoint contract.
 
 ## Historical result: earlier Isaac Lab backend
 
@@ -257,8 +277,11 @@ controlled speed comparison. No corresponding mjlab training result is claimed h
 
 ![Historical Isaac Lab success curve](results/success_curve.png)
 
-See [MILESTONES.md](MILESTONES.md) for the original run log. Old checkpoints may have compatible
-network shapes, but policy behavior must be reevaluated in the new simulator before reuse.
+See [MILESTONES.md](MILESTONES.md) for the original run log. Those policies used the former
+99-dimensional observation and cannot load into the current task. Checkpoints now require
+task schema version 2; version 1 and checkpoints without task metadata are rejected.
+There is no automatic weight slicing or legacy conversion. Train a new policy for the
+93-dimensional observation contract; the historical scores do not validate this change.
 
 ## Attribution and licenses
 

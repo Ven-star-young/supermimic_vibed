@@ -50,14 +50,12 @@ class RunningNorm(nn.Module):
         return torch.sqrt(self.var + self.eps**2)
 
 
-WM_OUT = G1Dynamics.output_dim  # Compatibility name for the original G1 model.
-
 # bf16 autocast for MLP matmuls only (state integration, FK, rewards stay fp32)
 AMP_DTYPE: torch.dtype | None = None
 
 
 def run_mlp(net: nn.Module, x: torch.Tensor) -> torch.Tensor:
-    if AMP_DTYPE is None:
+    if AMP_DTYPE is None or x.device.type != "cuda":
         return net(x)
     with torch.autocast("cuda", dtype=AMP_DTYPE):
         return net(x).float()
@@ -121,3 +119,16 @@ class Critic(nn.Module):
 
     def forward(self, x):
         return run_mlp(self.net, self.norm(x)).squeeze(-1)
+
+
+class TensorDictPolicy(nn.Module):
+    """Expose the learned policy through mjlab's native observation interface."""
+
+    def __init__(self, policy: Policy):
+        super().__init__()
+        self.policy = policy
+
+    def forward(self, observations) -> torch.Tensor:
+        history = observations["policy_history"]
+        history = history.reshape(history.shape[0], self.policy.hist, -1)
+        return self.policy(history, observations["goal"])

@@ -1,6 +1,9 @@
-"""Task-owned dimensions and model compatibility, independent of the learner."""
+"""Task-owned tensor spaces and checkpoint compatibility.
+
+Environment construction belongs to mjlab's task registry and standard scripts.
+This runtime only describes the differentiable task used by the learner.
+"""
 from dataclasses import asdict, dataclass
-from typing import Callable
 
 
 @dataclass(frozen=True)
@@ -21,8 +24,6 @@ class TrackingTask:
     dynamics: object
     env_cfg: object
     modeled_entities: tuple[str, ...] = ("robot",)
-    play: bool = False
-    validate_env_cfg: Callable | None = None
 
     @property
     def dimensions(self):
@@ -37,29 +38,33 @@ class TrackingTask:
     def goal_dim(self, frames):
         return self.dimensions.goal_per_frame * frames
 
-    def make_env(self, num_envs, device="cuda:0", gamma=0.99, **kwargs):
-        from ..envs.tracking_env import TrackingSim
-        if self.validate_env_cfg is not None:
-            self.validate_env_cfg(self.env_cfg)
+    def validate_model_coverage(self):
         extra = set(self.env_cfg.scene.entities) - set(self.modeled_entities)
         if extra:
             raise ValueError(
                 f"Task {self.name} dynamics/state do not model scene entities {sorted(extra)}. "
-                "Add object reference/state, dynamics and differentiable MDP heads before training. "
-                "Use TrackingSim directly for scene/contact inspection."
+                "Extend object references, state, dynamics and differentiable heads before training."
             )
-        kwargs.setdefault("eval_mode", self.play)
-        return TrackingSim(num_envs, self.motion, self.mdp, device=device, gamma=gamma,
-                           cfg=self.env_cfg, dynamics=self.dynamics, **kwargs)
+        # Physical and imagined returns must be the same function. Customize the
+        # shared command.reward_cfg, not a second simulator-only multiplier.
+        from ..mdp.native import tracking_reward
+        terms = self.env_cfg.rewards
+        if (set(terms) != {"tracking"} or terms["tracking"].func is not tracking_reward
+                or terms["tracking"].weight != 1.0 or self.env_cfg.scale_rewards_by_dt):
+            raise ValueError("Simulator rewards differ from the differentiable task head; configure motion.reward_cfg")
 
     def checkpoint_metadata(self):
-        return {"name": self.name, "schema_version": 1, "dimensions": asdict(self.dimensions)}
+        return {"name": self.name, "schema_version": 2, "dimensions": asdict(self.dimensions)}
 
     def validate_checkpoint(self, checkpoint):
         metadata = checkpoint.get("task")
         if metadata is None:
-            legacy = TaskDimensions(71, 29, 33, 99, 73, 184)
-            if self.name != "g1_tracking" or self.dimensions != legacy:
-                raise ValueError("Legacy checkpoint has no task schema; only default G1 tracking is supported")
+            raise ValueError(
+                "Legacy checkpoint has no task schema and may use the removed reference-orientation "
+                "observation. Retrain with the current task; implicit weight conversion is unsupported."
+            )
         elif metadata != self.checkpoint_metadata():
-            raise ValueError(f"Checkpoint task/schema mismatch: {metadata} != {self.checkpoint_metadata()}")
+            raise ValueError(
+                f"Checkpoint task/schema mismatch: {metadata} != {self.checkpoint_metadata()}. "
+                "Retrain with the current observation and reward definition."
+            )

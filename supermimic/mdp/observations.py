@@ -12,16 +12,14 @@ from .state import INV_DIM, NUM_J, XI_DIM, aligned_reference_positions, invarian
 
 @dataclass
 class ObservationCfg:
-    include_reference_orientation: bool = True
     joint_position_noise: float = 0.01
     joint_velocity_noise: float = 0.5
     angular_velocity_noise: float = 0.2
     gravity_noise: float = 0.05
-    reference_orientation_noise: float = 0.05
 
     @property
     def dimension(self) -> int:
-        return 3 * NUM_J + 6 + (6 if self.include_reference_orientation else 0)
+        return 3 * NUM_J + 6
 
     def noise_tensor(self, device=None) -> torch.Tensor:
         values = [
@@ -31,8 +29,6 @@ class ObservationCfg:
             torch.full((3,), self.gravity_noise),
             torch.zeros(NUM_J),
         ]
-        if self.include_reference_orientation:
-            values.append(torch.full((6,), self.reference_orientation_noise))
         return torch.cat(values).to(device=device)
 
     def scale_tensor(self, device=None) -> torch.Tensor:
@@ -41,8 +37,6 @@ class ObservationCfg:
             torch.ones(NUM_J), torch.full((NUM_J,), 0.1), torch.full((3,), 0.25),
             torch.ones(3), torch.ones(NUM_J),
         ]
-        if self.include_reference_orientation:
-            values.append(torch.ones(6))
         return torch.cat(values).to(device=device)
 
 
@@ -52,15 +46,13 @@ OBS_SCALE = ObservationCfg().scale_tensor()
 CRITIC_EXTRA = NUM_J + 14 * 3 + 3 + 6 + XI_DIM
 
 
-def proprioception(S, a_prev, xi, reference_R, default_q, cfg: ObservationCfg):
-    """Noiseless proprioception, optionally including relative reference attitude."""
+def proprioception(S, a_prev, xi, default_q):
+    """93-D robot proprioception, independent of reference motion or phase."""
     _, R, _, w, q, qd = S
     Rt = R.transpose(-1, -2)
     dq0 = xi[..., 1 : 1 + NUM_J]
     g_b = -R[..., 2, :]
     values = [q - default_q - dq0, qd, (Rt @ w.unsqueeze(-1)).squeeze(-1), g_b, a_prev]
-    if cfg.include_reference_orientation:
-        values.append(mat_to_6d(Rt @ reference_R))
     return torch.cat(values, -1)
 
 

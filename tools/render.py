@@ -1,4 +1,4 @@
-"""Render recorded evaluation trajectories (supermimic/evaluate.py --record) with MuJoCo (EGL).
+"""Render recorded evaluation trajectories (python -m supermimic.scripts.evaluate --record) with MuJoCo (EGL).
 
 The simulated robot is drawn solid; the reference motion is a translucent ghost.
 Usage: MUJOCO_GL=egl python tools/render.py traj.npz out.mp4 --clips dance1_subject1 jumps1_subject1 --seconds 12

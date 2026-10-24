@@ -1,70 +1,66 @@
-"""Training defaults (paper Table A.5) and command-line configuration.
+"""SuperMimic learner configuration consumed by mjlab's standard CLI."""
 
-Task packages may construct a modified ``TrainConfig`` without importing the runner.
-"""
+from dataclasses import dataclass, field
+from typing import Literal
 
-from __future__ import annotations
-
-import argparse
-from dataclasses import dataclass, fields
-from pathlib import Path
-
-REPO = Path(__file__).resolve().parents[2]
+import tyro
+from mjlab.rl import RslRlBaseRunnerCfg
 
 
 @dataclass
-class TrainConfig:
-    task: str = "g1_tracking"
-    num_envs: int = 4096
-    iterations: int = 320_000
-    buffer_steps: int = 1000
-    utd: float = 0.4
-    horizon: int = 32
-    goal_frames: int = 10
-    hist: int = 10
-    wm_window: int = 8
-    wm_batches: int = 10
-    wm_batch: int = 2048
-    pi_batch: int = 4096
-    lr: float = 2e-4
-    gamma: float = 0.99
-    lam: float = 0.95
-    action_noise: float = 0.1
-    critic_epochs: int = 5
-    critic_minibatches: int = 4
-    no_critic: bool = False
-    warmup_steps: int = 64
-    wm_only_iters: int = 500
-    lr_decay_iters: int = 250_000
-    ckpt_every: int = 2000
-    log_every: int = 50
-    motion_dir: str = str(REPO / "data" / "lafan1_g1")
-    log_dir: str = str(REPO / "logs" / "run")
+class SuperMimicRunnerCfg(RslRlBaseRunnerCfg):
+    """Paper Table A.5 defaults; scene and observation settings belong to the task."""
+
+    class_name: str = "SuperMimicRunner"
     seed: int = 0
-    resume: str | None = None
+    max_iterations: int = 320_000
+    save_interval: int = 2000
+    experiment_name: str = "supermimic_g1_tracking"
+    logger: Literal["tensorboard", "wandb"] = "tensorboard"
+    wandb_project: str = "supermimic"
+    obs_groups: dict[str, tuple[str, ...]] = field(
+        default_factory=lambda: {"actor": ("policy_history", "goal")}
+    )
+    # The inherited PPO rollout length is unused; collection uses utd.
+    num_steps_per_env: tyro.conf.Suppress[int] = 0
+
+    buffer_steps: int = 1000
+    """Replay capacity in vectorized simulator steps."""
+    utd: float = 0.4
+    """Learner updates per vectorized simulator step."""
+    horizon: int = 32
+    """World-model imagination length for policy and critic training."""
+    wm_window: int = 8
+    """Autoregressive world-model training window length."""
+    wm_batches: int = 10
+    """World-model optimizer updates per learning iteration."""
+    wm_batch: int = 2048
+    """Real replay windows in each world-model optimizer update."""
+    pi_batch: int = 4096
+    """Imagined trajectories per policy update."""
+    lr: float = 2e-4
+    """Initial learning rate for all three optimizers."""
+    gamma: float = 0.99
+    """Reward discount used by the learner and reset curriculum."""
+    lam: float = 0.95
+    """Lambda-return coefficient for imagined critic targets."""
+    action_noise: float = 0.1
+    """Standard deviation of action noise during real replay collection."""
+    critic_epochs: int = 5
+    """Critic epochs per policy update."""
+    critic_minibatches: int = 4
+    """Critic minibatches per epoch."""
+    no_critic: bool = False
+    """Disable critic fitting and terminal value bootstrapping."""
+    warmup_steps: int = 64
+    """Replay prefill before updates, including after resuming."""
+    wm_only_iters: int = 500
+    """Initial learning iterations that update only the world model."""
+    lr_decay_iters: int = 250_000
+    """Cosine learning-rate decay horizon, ending at 3% of the initial rate."""
+    log_every: int = 50
+    """Learning iterations between metric reports."""
     no_compile: bool = False
-    amp: str = "bf16"
-    device: str = "cuda:0"
-
-
-def build_train_parser(defaults: TrainConfig | None = None) -> argparse.ArgumentParser:
-    defaults = defaults or TrainConfig()
-    parser = argparse.ArgumentParser(description="Train SuperMimic through a registered task.")
-    help_text = {
-        "utd": "updates per vectorized simulator step",
-        "warmup_steps": "sim steps before any update",
-        "wm_only_iters": "world-model-only iterations at the start",
-        "no_compile": "disable torch.compile for debugging and small smoke runs",
-        "amp": "autocast dtype for MLP matmuls",
-    }
-    for field in fields(defaults):
-        value = getattr(defaults, field.name)
-        options = {"default": value, "help": help_text.get(field.name)}
-        if isinstance(value, bool):
-            options["action"] = "store_true"
-        else:
-            options["type"] = type(value) if value is not None else str
-        if field.name == "amp":
-            options["choices"] = ["none", "bf16"]
-        parser.add_argument("--" + field.name, **options)
-    return parser
+    """Disable torch.compile for debugging and short smoke runs."""
+    amp: Literal["none", "bf16"] = "bf16"
+    """CUDA MLP autocast precision; state and reward calculations remain FP32."""

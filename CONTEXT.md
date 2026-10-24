@@ -1,75 +1,100 @@
 # SuperMimic task and learning contracts
 
-This repository trains G1 motion tracking with SuperMimic's learned dynamics and imagined
-policy gradients. Physical rollouts use mjlab 1.6.0 and MuJoCo-Warp. HDMI supplies a useful
-organization pattern for assets, task configuration and MDP terms; its PPO update is not
-the learning algorithm used here.
+Physical rollouts use the stock mjlab 1.6.0 `ManagerBasedRlEnv` and MuJoCo-Warp.
+The package registers its task through the `mjlab.tasks` entry-point group. Standard
+mjlab `train` and `play` own argument parsing, GPU selection, environment creation,
+log-directory allocation and viewer lifecycle. `SuperMimicRunner` supplies learning,
+checkpoint save/load and policy inference; it has no command-line launcher.
 
 ## Ownership
 
-| Layer | Owns | Does not own |
-|---|---|---|
-| `assets/` | Native robot/object models, joint names, actuators | Rewards or optimizer updates |
-| `tasks/` | A task's composition, dimensions and checkpoint contract | Generic rollout optimization |
-| `envs/` | Scene/simulation lifecycle, physical steps, terminal snapshots and reset | Imagined-state integration |
-| `mdp/` | Commands, actions, events, pure observation/reward/termination functions, state/dynamics representations | Training loop scheduling |
-| `rl/` | Models, replay, model fitting, imagined BPTT updates, critic and evaluation | Task-specific scene contents |
+| Layer | Owns |
+|---|---|
+| `assets/` | Native robot/object models, joint names, actuators and differentiable FK |
+| `tasks/` | mjlab task registration, native manager configuration, task dimensions and checkpoint schema |
+| `mdp/` | Native commands/actions/events, shared tensor observation/reward/termination heads and state/dynamics |
+| `rl/` | Runner, replay adapter, models, storage, model fitting, imagined BPTT and critic updates |
+| `scripts/evaluate.py` | Full motion-library scoring and trajectory recording, separate from interactive `play` |
 
-`tasks.g1_tracking.env_cfgs.make_env_cfg()` creates a fresh configuration. Mutating one
-configuration must not affect another. `tasks.load_task("g1_tracking", ...)` constructs
-the task runtime from motion data and the device. The runtime supplies dimensions and
-environment construction, allowing replay and model input/output allocation to use the same
-task contract. CLI modules delegate to runtime functions only when called explicitly.
+The task ID is `Mjlab-SuperMimic-Tracking-Unitree-G1`. Configuration factories are
+independent and can be imported without loading motion files or initializing CUDA.
+The registered `MotionCommand` creates the task runtime when the environment loads
+its managers. The pure `build_task()` API supports tensor/model use without a simulator.
 
-## Current state and action
+## State and action
 
 The G1 state is `S = (p, R, v, w, q, qd)`: world pelvis-link position, rotation matrix,
-world linear/angular link-origin velocity, and 29 named joint positions/velocities. Replay
-stores the rotation as a wxyz quaternion, giving 71 state values. These conventions match
-the motion library and differentiable FK. Joint order is defined by the asset, not by
-incidental MuJoCo index order.
+world linear/angular link-origin velocity, and 29 named joint positions/velocities.
+Replay stores orientation as a wxyz quaternion, giving 71 state values. State reads
+use integrated generalized coordinates; reward and termination therefore agree with
+that transition rather than lagging one physics substep behind derived MuJoCo fields.
 
 An action has 29 values and sets joint targets around the default pose, with physical
-calibration offsets and actuator scales. The context currently has 33 values: friction,
-29 joint offsets and a three-dimensional torso center-of-mass offset. The observation has
-99 values by default, including the existing six-dimensional reference-relative rotation;
-the observation configuration can disable that addition. Goals contain 73 values per
-reference frame. These are properties of the G1 tracking task, not universal dimensions
-for future tasks.
+calibration offsets and actuator scales. The 33 context values are friction, 29 joint
+offsets and a three-dimensional torso CoM offset. The single-frame policy observation
+has 93 values: 29 relative joint positions, 29 joint velocities, 3 body-frame angular
+velocities, 3 projected-gravity components and 29 previous actions. This follows
+Appendix A, Table A.1 of [SuperMimic v1](https://arxiv.org/pdf/2610.28480v1#page=13).
+The actor observation is independent of the reference frame; its former six-dimensional
+reference-relative root rotation, noise and configuration flag have been removed.
 
-The world model predicts frame-local increments. Its integration, regression targets and
-error representation must describe the same state. A future object task must extend all
-three together; increasing replay width alone does not make a model object-aware.
+Ten observation frames give 930 values. Goals retain 73 values per future reference
+frame (730 for ten frames), encoded into a 32-value latent; the policy decoder receives
+962 values. This goal encoding is an independent implementation choice whose exact
+agreement with the paper authors' implementation is unverified. The world model keeps
+133 input values and 70 predicted increments. The critic keeps 184 current features
+including privileged reference-relative rotation, plus the 730-value goal (914 total).
+These are G1 task properties, not universal dimensions for future tasks.
+
+The world model predicts frame-local increments. Its features, integration, regression
+targets and loss must describe the same state. Object interaction must extend all of
+these together; changing replay width or scene entities alone is insufficient.
 
 ## Physical and imagined rollouts
 
-Both paths use the same task MDP instance and configuration for observations, rewards and
-termination. Rewards must remain differentiable with respect to imagined states. Hard
-termination is used in physics; the corresponding smooth survival probability is used in
-imagination. Calling a MuJoCo contact sensor inside an imagined reward cannot supply a
-gradient through predicted object motion.
+Both paths use the same tensor MDP configuration for observations, rewards and
+termination. Set reward weights through `commands["motion"].reward_cfg`; the replay adapter
+rejects additional simulator-only reward terms, weights or a second dt scaling.
+Physical stepping uses hard failure tests; imagination uses smooth
+survival probabilities and differentiable rewards. A real contact sensor does not
+supply a gradient through predicted object motion.
 
-Physical `step(action)` returns `s`, `s1`, `a`, `a_prev`, `f`, `xi`, `r`, `term`, `done`,
-`ep_step` and diagnostic reward terms. `s1` is copied **before** automatic reset. A failed
-world resets without changing other worlds; replay windows mask transitions across episode
-boundaries. Physics advances four 5 ms steps per 20 ms control step.
+Removing reference-dependent actor observation does not remove reference-dependent
+tracking objectives. Root orientation reward remains as explicitly defined in the
+paper's Table A.2 (weight 0.5, scale 0.4), together with body orientation reward and
+tilt-based termination. The maximum per-step reward remains 0.1. The critic's privileged
+features are separate from the actor observation contract; retaining them does not
+establish that its exact encoding matches the paper's implementation.
 
-The scene can contain additional native entities and sensors for simulation experiments.
-The current task's training factory rejects entities outside its robot-only learned state.
-Adding object training requires object motion data, state/dynamics, reset, goals, observation,
-reward and checkpoint contracts. This refactor establishes boundaries for that work; it does
-not implement an object interaction policy.
+Four 5 ms physics steps produce one 20 ms control step. At reference frame `f`,
+the action advances physics; reward and failure compare the integrated state to
+`f + 1`. The command then advances its reference index before observations are built.
+History observations reset only selected worlds and refill with the new initial frame.
+The inference callable consumes the observation dictionary passed by mjlab `play`.
 
-## Compatibility and validation
+Training disables native auto-reset. `ReplayEnvAdapter` records `s`, `s1`, `a`,
+`a_prev`, `f`, `xi`, `r`, `term`, `done` and `ep_step`, then resets ended worlds.
+`s1` is copied before reset. Native `play` uses auto-reset; quantitative evaluation
+tracks a separate per-clip alive mask so reset rollouts cannot add to finished scores.
+Stock mjlab applies step/interval events after reward and termination; replay's next
+state includes such events, while reward belongs to the preceding physics result.
 
-Historical top-level imports remain adapters so existing smoke scripts and integrations keep
-working. New checkpoints carry task metadata; incompatible task layouts must be rejected
-before model loading. Historical checkpoints remain tied to their original task/backend and
-must be evaluated before reuse.
+Object entities/contact sensors can be inspected in an ordinary native environment.
+The replay adapter rejects scene entities absent from the task's modeled state.
+A future interaction task must supply object references, state/dynamics, context,
+goals, reset behavior and differentiable contact objectives before training.
 
-The regression suite covers CPU FK against MuJoCo Jacobians, native CUDA reset and stepping,
-terminal snapshots, physical randomization, configuration isolation, import safety and
-gradients through the world model. Contact histories remain unchanged in worlds excluded
-from a reset, and step/interval state changes are included in the saved next state. Small
-tests validate software behavior; no completed
-mjlab training benchmark is claimed. Earlier Isaac Lab results remain historical evidence.
+## Checkpoints and validation
+
+Checkpoints require task metadata with schema version 2. Version 1, incompatible layouts
+and missing metadata are rejected before loading. Earlier 99-observation policies cannot
+load into the current 93-observation task; no implicit weight slicing or conversion is
+performed. See [ADR 0003](docs/adr/0003-paper-observation-contract.md).
+Fresh training and resumed training both fill a new replay
+buffer before model fitting because replay is not checkpointed. Interactive play and
+quantitative evaluation load policy weights without allocating replay or optimizers.
+
+Tests cover native task registration and CLI discovery, import safety, CPU FK against
+MuJoCo, manager timing, partial/terminal resets, histories, randomization, contact
+sensors and gradients through the learned model. Runtime smoke checks are separate
+from a completed training benchmark. Earlier Isaac Lab results remain historical.
