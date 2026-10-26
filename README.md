@@ -1,5 +1,8 @@
 # SuperMimic motion tracking with mjlab
 
+本地训练策略实时回放：`./play_policy.sh /path/to/model.pt`。
+模型选择、换椅子和窗口操作见[策略回放说明](docs/policy-playback.md)。
+
 **Unofficial** reproduction of *SuperMimic: Scaling Humanoid Whole-Body Control with One
 Differentiable World Model* ([arXiv:2610.28480](https://arxiv.org/abs/2610.28480)). The target
 experiment is the controlled LAFAN1 comparison (Fig. 4a): 40 G1-retargeted motion clips
