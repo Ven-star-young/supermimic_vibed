@@ -7,6 +7,12 @@ Critic 属于任务层。新增任务加载已有物理模型后，可以混合�
 当前工程验证包含真实接触、学习更新和跨任务权重加载；尚无完整坐椅子训练结果、
 成功率或跨椅型泛化基准。一次迭代通过不表示策略已经学会坐下。
 
+坐椅子任务的具体实现集中在 `supermimic/tasks/sitting/`：`assets.py` 定义椅子，
+`motion.py` 处理参考，`commands.py` 同步初始化，`mdp.py` 定义观测与奖励，
+`events.py` 负责随机化，`env_cfgs.py` 和 `task.py` 组装任务。
+通用世界模型与跨任务 Replay 分别位于 `supermimic/rl/shared_world_model.py` 和
+`supermimic/rl/shared_replay.py`。SharedTracking 复用 sitting 工厂的无物体配置。
+
 ## 三个任务与维度
 
 任务 ID 的公共前缀是 `Mjlab-SuperMimic-`，公共后缀是 `-Unitree-G1`。

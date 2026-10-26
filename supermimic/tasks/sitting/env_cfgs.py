@@ -12,12 +12,12 @@ from ...assets import DATA_DIR
 from ...assets.g1.g1_constants import make_g1_robot_cfg
 from ..g1_tracking.env_cfgs import make_env_cfg as make_tracking_env_cfg
 from .assets import make_chair_spec
-from .commands import InteractionCommandCfg
+from .commands import SittingCommandCfg
 from .events import randomize_object_physics
 
 
 @dataclass(kw_only=True)
-class InteractionEnvCfg(ManagerBasedRlEnvCfg):
+class SittingEnvCfg(ManagerBasedRlEnvCfg):
     def __post_init__(self):
         # Tyro reconstructs command configs. Rebind the lazy asset factory to
         # that new command rather than retaining a closure over CLI defaults.
@@ -39,7 +39,7 @@ class InteractionEnvCfg(ManagerBasedRlEnvCfg):
 
 def make_env_cfg(play=False, *, object_enabled=True):
     baseline = make_tracking_env_cfg(play)
-    command = InteractionCommandCfg(
+    command = SittingCommandCfg(
         **{name: getattr(baseline.commands["motion"], name)
            for name in baseline.commands["motion"].__dataclass_fields__},
         object_enabled=object_enabled,
@@ -50,4 +50,4 @@ def make_env_cfg(play=False, *, object_enabled=True):
     baseline.scene.entities["robot"] = make_g1_robot_cfg(interaction_collisions=True)
     # Avoid asdict: it would recursively convert manager config dataclasses to
     # dictionaries and lose the native mjlab interfaces.
-    return InteractionEnvCfg(**{name: getattr(baseline, name) for name in baseline.__dataclass_fields__})
+    return SittingEnvCfg(**{name: getattr(baseline, name) for name in baseline.__dataclass_fields__})

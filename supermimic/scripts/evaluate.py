@@ -114,7 +114,7 @@ def score_checkpoint(path: Path, args):
     cfg.commands["motion"].history_length = policy_cfg["history_length"]
     cfg.commands["motion"].goal_frames = policy_cfg["goal_frames"]
     if hasattr(cfg.commands["motion"], "object_enabled"):
-        from supermimic.tasks.interaction.assets import select_motion_files
+        from supermimic.tasks.sitting.assets import select_motion_files
         cfg.scene.num_envs = len(select_motion_files(cfg.commands["motion"]))
     else:
         cfg.scene.num_envs = len(list(Path(cfg.commands["motion"].motion_dir).glob("*.npz")))

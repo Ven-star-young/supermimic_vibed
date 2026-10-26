@@ -9,7 +9,7 @@ from ...motion import MotionLib, _gradient
 from ...rotations import quat_slerp, quat_to_mat, so3_log, yaw_mat
 
 
-class InteractionMotionLib(MotionLib):
+class SittingMotionLib(MotionLib):
     object_goal_feature_dim = 6
 
     def __init__(self, files, kin, device, *, object_enabled=True):
@@ -20,7 +20,7 @@ class InteractionMotionLib(MotionLib):
             if object_enabled:
                 clip = load_motion(path)
                 if "object_pos" not in clip:
-                    raise ValueError(f"{path}: interaction training requires object reference poses")
+                    raise ValueError(f"{path}: sitting training requires object reference poses")
                 p = torch.as_tensor(clip["object_pos"], dtype=torch.float32)
                 q = torch.as_tensor(clip["object_quat"], dtype=torch.float32)
                 # The robot loader owns the frame count: no second clock or

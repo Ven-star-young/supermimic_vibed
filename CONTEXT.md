@@ -17,7 +17,7 @@ checkpoint save/load and policy inference; it has no command-line launcher.
 | `tasks/` | mjlab task registration, native manager configuration, task dimensions and checkpoint schema |
 | `mdp/` | Native commands/actions/events, shared tensor observation/reward/termination heads and state/dynamics |
 | `rl/` | Runner, replay adapter, models, storage, model fitting, imagined BPTT and critic updates |
-| `tasks/interaction/` | Optional rigid-object references, task heads, collision assets and physical randomization |
+| `tasks/sitting/` | Sitting references, task heads, chair assets and physical randomization |
 | `rl/shared_world_model.py` | Task-independent state/integration, geometry encoder and masked normalization |
 | `rl/shared_replay.py` | Portable real transitions, episode masks and geometry ID remapping |
 | `scripts/evaluate.py` | Full motion-library scoring and trajectory recording, separate from interactive `play` |
@@ -55,7 +55,7 @@ requires at least two resampled frames; the portable format and kinematic replay
 a single frame.
 
 The tracking tasks default to `data/motions/lafan1`; Sitting defaults to
-`data/motions/sitting`. `InteractionMotionLib` resamples object poses on the robot's
+`data/motions/sitting`. `SittingMotionLib` resamples object poses on the robot's
 same frame grid and derives world velocities. Sitting selects clips with the same
 mesh, collision recipe and scale as one anchor clip. One MuJoCo batch has one physical
 object geometry; different shapes require separate runs. The original Tracking task

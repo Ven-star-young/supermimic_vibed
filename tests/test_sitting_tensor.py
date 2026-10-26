@@ -9,9 +9,9 @@ from supermimic.assets.g1.g1_constants import G1_JOINT_NAMES, default_joint_pos_
 from supermimic.mdp import MDP
 from supermimic.rotations import so3_exp, yaw_mat
 from supermimic.rl.shared_world_model import SharedDynamics
-from supermimic.tasks.interaction.mdp import InteractionMDP, ObjectRewardCfg
-from supermimic.tasks.interaction.motion import InteractionMotionLib
-from supermimic.tasks.interaction.task import InteractionTask
+from supermimic.tasks.sitting.mdp import SittingMDP, ObjectRewardCfg
+from supermimic.tasks.sitting.motion import SittingMotionLib
+from supermimic.tasks.sitting.task import SittingTask
 
 
 def write_clip(path, *, offset=0.0, with_object=True):
@@ -33,8 +33,8 @@ def write_clip(path, *, offset=0.0, with_object=True):
 @pytest.fixture
 def interaction(cpu_kin, tmp_path):
     path = write_clip(tmp_path / "motion.npz")
-    motion = InteractionMotionLib([path], cpu_kin, "cpu")
-    mdp = InteractionMDP(cpu_kin, motion, torch.tensor(default_joint_pos_list()))
+    motion = SittingMotionLib([path], cpu_kin, "cpu")
+    mdp = SittingMDP(cpu_kin, motion, torch.tensor(default_joint_pos_list()))
     return motion, mdp
 
 
@@ -47,7 +47,7 @@ def context(batch=2, present=True):
 
 def test_object_reference_clock_and_clip_boundary_velocity(cpu_kin, tmp_path):
     files = [write_clip(tmp_path / "a.npz"), write_clip(tmp_path / "b.npz", offset=100)]
-    motion = InteractionMotionLib(files, cpu_kin, "cpu")
+    motion = SittingMotionLib(files, cpu_kin, "cpu")
     assert motion.clip_len.tolist() == [11, 11]
     time = torch.arange(11) * 0.02
     expected_position = torch.tensor([1., .3, .5]) + time[:, None] * torch.tensor([.4, -.2, .1])
@@ -64,8 +64,8 @@ def test_object_reference_clock_and_clip_boundary_velocity(cpu_kin, tmp_path):
 def test_object_reference_is_required_only_for_interaction(cpu_kin, tmp_path):
     path = write_clip(tmp_path / "robot.npz", with_object=False)
     with pytest.raises(ValueError, match="requires object reference poses"):
-        InteractionMotionLib([path], cpu_kin, "cpu")
-    motion = InteractionMotionLib([path], cpu_kin, "cpu", object_enabled=False)
+        SittingMotionLib([path], cpu_kin, "cpu")
+    motion = SittingMotionLib([path], cpu_kin, "cpu", object_enabled=False)
     torch.testing.assert_close(motion.object_R, torch.eye(3).expand(11, -1, -1))
     assert motion.object_p.count_nonzero() == 0
     assert motion.object_w.count_nonzero() == 0
@@ -130,7 +130,7 @@ def test_critic_layout_mask_geometry_detach_and_future_reference(interaction):
     position = (state[6] + .03).detach().requires_grad_()
     state = (*state[:6], position, *state[7:])
     features = mdp.critic_features(state, f, xi, geometry)
-    task = InteractionTask("g1_sitting", motion, mdp, SharedDynamics(), None)
+    task = SittingTask("g1_sitting", motion, mdp, SharedDynamics(), None)
     assert features.shape == (2, 285)
     assert task.critic_goal_dim(10) == 790
     goal = task.critic_goal(state, f, 10)
@@ -171,8 +171,8 @@ def test_object_future_goal_uses_one_current_heading_and_clamps_clip(interaction
 
 def test_shared_tracking_retains_original_task_heads(cpu_kin, tmp_path):
     path = write_clip(tmp_path / "robot.npz", with_object=False)
-    motion = InteractionMotionLib([path], cpu_kin, "cpu", object_enabled=False)
-    mdp = InteractionMDP(cpu_kin, motion, torch.tensor(default_joint_pos_list()), object_enabled=False)
+    motion = SittingMotionLib([path], cpu_kin, "cpu", object_enabled=False)
+    mdp = SittingMDP(cpu_kin, motion, torch.tensor(default_joint_pos_list()), object_enabled=False)
     baseline = MDP(cpu_kin, motion, mdp.default_q)
     f = torch.tensor([1, 2])
     state, action, xi = motion.full_ref_state(f), torch.zeros(2, 29), context(present=False)
@@ -181,7 +181,7 @@ def test_shared_tracking_retains_original_task_heads(cpu_kin, tmp_path):
     assert mdp.max_step_reward == baseline.max_step_reward
     assert mdp.observation_dim == 93 and mdp.critic_feature_dim == 285
     assert motion.object_goal(state, f, 10).count_nonzero() == 0
-    metadata = InteractionTask("g1_shared_tracking", motion, mdp, SharedDynamics(), None).checkpoint_metadata()
+    metadata = SittingTask("g1_shared_tracking", motion, mdp, SharedDynamics(), None).checkpoint_metadata()
     assert metadata["schema_version"] != 2
 
 

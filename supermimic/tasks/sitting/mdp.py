@@ -20,7 +20,7 @@ class ObjectRewardCfg:
             raise ValueError("Object reward requires a nonnegative weight and positive error scales")
 
 
-class InteractionMDP(MDP):
+class SittingMDP(MDP):
     def __init__(self, *args, object_enabled=True, object_reward_cfg=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.object_enabled = object_enabled

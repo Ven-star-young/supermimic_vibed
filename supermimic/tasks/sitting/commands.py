@@ -1,4 +1,4 @@
-"""Shared tracking/interaction command with synchronized object initialization."""
+"""Sitting reference command with synchronized robot and chair initialization."""
 
 from dataclasses import dataclass, field
 
@@ -14,7 +14,7 @@ from .mdp import ObjectRewardCfg
 
 
 @dataclass(kw_only=True)
-class InteractionCommandCfg(MotionCommandCfg):
+class SittingCommandCfg(MotionCommandCfg):
     object_enabled: bool = True
     object_motion_file: str | None = None
     collision_cache_dir: str = str(DEFAULT_CACHE_DIR)
@@ -22,10 +22,10 @@ class InteractionCommandCfg(MotionCommandCfg):
     object_reward_cfg: ObjectRewardCfg = field(default_factory=ObjectRewardCfg)
 
     def build(self, env):
-        return InteractionCommand(self, env)
+        return SittingCommand(self, env)
 
 
-class InteractionCommand(MotionCommand):
+class SittingCommand(MotionCommand):
     def __init__(self, cfg, env):
         super().__init__(cfg, env)
         self.geometry_bank = GeometryBank()

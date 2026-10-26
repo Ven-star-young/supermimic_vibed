@@ -12,7 +12,7 @@ import torch
 def interaction_env(directory, device, *, objects):
     from mjlab.envs import ManagerBasedRlEnv
     from mjlab.rl import RslRlVecEnvWrapper
-    from supermimic.tasks.interaction.env_cfgs import make_env_cfg
+    from supermimic.tasks.sitting.env_cfgs import make_env_cfg
 
     cfg = make_env_cfg(object_enabled=objects)
     cfg.scene.num_envs = 2

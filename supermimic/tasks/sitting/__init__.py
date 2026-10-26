@@ -2,7 +2,7 @@
 from mjlab.tasks.registry import register_mjlab_task
 
 from ...rl.runner import SuperMimicRunner
-from ..interaction.env_cfgs import make_env_cfg
+from .env_cfgs import make_env_cfg
 from ..g1_tracking.rl_cfg import make_supermimic_runner_cfg
 
 register_mjlab_task(

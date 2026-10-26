@@ -25,7 +25,7 @@ def sitting_file():
 @pytest.fixture(scope="module")
 def sitting_env(cuda_device, sitting_file):
     from mjlab.envs import ManagerBasedRlEnv
-    from supermimic.tasks.interaction.env_cfgs import make_env_cfg
+    from supermimic.tasks.sitting.env_cfgs import make_env_cfg
     cfg = make_env_cfg(play=False)
     cfg.scene.num_envs, cfg.auto_reset = 2, False
     cfg.commands["motion"].motion_dir = str(sitting_file)
@@ -54,12 +54,12 @@ def contact_data(env):
 def test_sitting_config_is_lazy_and_cli_uses_updated_command(monkeypatch):
     import mjlab
     import tyro
-    from supermimic.tasks.interaction import assets
-    from supermimic.tasks.interaction.env_cfgs import InteractionEnvCfg, make_env_cfg
+    from supermimic.tasks.sitting import assets
+    from supermimic.tasks.sitting.env_cfgs import SittingEnvCfg, make_env_cfg
     monkeypatch.setattr(assets, "load_motion", lambda *_: pytest.fail("Factory must not read dataset"))
     cfg = make_env_cfg(play=True)
     assert "chair" not in make_env_cfg(object_enabled=False).scene.entities
-    parsed = tyro.cli(InteractionEnvCfg, default=cfg, config=mjlab.TYRO_FLAGS,
+    parsed = tyro.cli(SittingEnvCfg, default=cfg, config=mjlab.TYRO_FLAGS,
                       args=["--commands.motion.motion-dir", "/tmp/updated-motion-directory"])
     assert parsed.scene.entities["chair"].spec_fn.args[0] is parsed.commands["motion"]
     assert parsed.scene.entities["chair"].spec_fn.args[0].motion_dir == "/tmp/updated-motion-directory"
@@ -74,9 +74,9 @@ def test_sitting_config_is_lazy_and_cli_uses_updated_command(monkeypatch):
 
 
 def test_geometry_sampling_scale_and_missing_cache_are_explicit(sitting_file, tmp_path):
-    from supermimic.tasks.interaction.assets import sample_geometry, selected_asset
-    from supermimic.tasks.interaction.commands import InteractionCommandCfg
-    cfg = InteractionCommandCfg(motion_dir=str(sitting_file))
+    from supermimic.tasks.sitting.assets import sample_geometry, selected_asset
+    from supermimic.tasks.sitting.commands import SittingCommandCfg
+    cfg = SittingCommandCfg(motion_dir=str(sitting_file))
     asset = selected_asset(cfg)
     points, extent = sample_geometry(asset.parts, asset.clip["object_scale"])
     np.testing.assert_array_equal(points, asset.points)
@@ -89,13 +89,13 @@ def test_geometry_sampling_scale_and_missing_cache_are_explicit(sitting_file, tm
 
 def test_scene_selection_filters_shape_and_scale_without_using_filenames(sitting_file, tmp_path):
     from motion_data import load_motion, save_motion
-    from supermimic.tasks.interaction.assets import select_motion_files
-    from supermimic.tasks.interaction.commands import InteractionCommandCfg
+    from supermimic.tasks.sitting.assets import select_motion_files
+    from supermimic.tasks.sitting.commands import SittingCommandCfg
     clip = load_motion(sitting_file)
     save_motion(tmp_path / "a.npz", clip)
     save_motion(tmp_path / "unrelated-name.npz", {**clip, "root_pos": clip["root_pos"] + .01})
     save_motion(tmp_path / "different-scale.npz", {**clip, "object_scale": clip["object_scale"] * 1.01})
-    cfg = InteractionCommandCfg(motion_dir=str(tmp_path))
+    cfg = SittingCommandCfg(motion_dir=str(tmp_path))
     assert {p.name for p in select_motion_files(cfg)} == {"a.npz", "unrelated-name.npz"}
     assert len(select_motion_files(replace(cfg, object_enabled=False))) == 3
     cfg.object_motion_file = str(tmp_path / "different-scale.npz")
@@ -116,7 +116,7 @@ def test_sitting_reset_uses_one_reference_frame_for_robot_and_object(sitting_env
 
 
 def test_object_randomization_updates_actual_mass_inertia_and_partial_reset(sitting_env):
-    from supermimic.tasks.interaction.assets import selected_asset
+    from supermimic.tasks.sitting.assets import selected_asset
     env = sitting_env
     cmd = env.command_manager.get_term("motion")
     reset_frames(env)

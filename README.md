@@ -24,7 +24,7 @@ Original implementation: **Chong Zhang** (ETH Zurich). Code license: [MIT](LICEN
 | `pyproject.toml`, `uv.lock` | Native Python package and locked runtime dependencies |
 | `supermimic/assets/g1/` | G1 MJCF, mjlab entity, actuator settings, joint ordering and differentiable forward kinematics |
 | `supermimic/tasks/g1_tracking/` | Current task's scene, simulation, MDP and learning configuration |
-| `supermimic/tasks/interaction/` | Shared tracking/sitting task heads, object references, dynamic chair and randomization |
+| `supermimic/tasks/sitting/` | Sitting scene, references, observations, rewards and physical randomization |
 | `supermimic/tasks/` | Native mjlab task registration, dimensions and checkpoint contract |
 | `supermimic/mdp/` | Commands, actions, events, observations, rewards, termination and state/dynamics functions |
 | `motion_data/__init__.py` | NumPy-only shared NPZ schema, validation, loading and saving |

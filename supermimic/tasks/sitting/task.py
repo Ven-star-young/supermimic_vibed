@@ -10,11 +10,11 @@ from ...assets.g1.kinematics import G1Kinematics
 from ...rl.shared_world_model import SharedDynamics
 from ..base import TrackingTask
 from ..g1_tracking.task import validate_env_cfg
-from .mdp import InteractionMDP
-from .motion import InteractionMotionLib
+from .mdp import SittingMDP
+from .motion import SittingMotionLib
 
 
-class InteractionTask(TrackingTask):
+class SittingTask(TrackingTask):
     def critic_goal_dim(self, frames):
         return self.goal_dim(frames) + self.motion.object_goal_feature_dim * frames
 
@@ -42,7 +42,7 @@ def build_task(motion_dir=None, *, device="cuda:0", play=False, motion=None, kin
         if files is None:
             from .assets import select_motion_files
             files = select_motion_files(command if motion_dir is None else replace(command, motion_dir=motion_dir))
-        motion = InteractionMotionLib(files, kin, device, object_enabled=enabled)
+        motion = SittingMotionLib(files, kin, device, object_enabled=enabled)
     if motion.object_enabled != enabled:
         raise ValueError("Motion object references and scene object_enabled must agree")
     joint_positions = cfg.scene.entities["robot"].init_state.joint_pos
@@ -53,13 +53,13 @@ def build_task(motion_dir=None, *, device="cuda:0", play=False, motion=None, kin
             if re.fullmatch(pattern, name):
                 value = position
         defaults.append(value)
-    mdp = InteractionMDP(
+    mdp = SittingMDP(
         kin, motion, torch.tensor(defaults, device=device), cfg=command.reward_cfg,
         observation_cfg=command.observation_cfg, termination_cfg=command.termination_cfg,
         control_dt=cfg.sim.mujoco.timestep * cfg.decimation, object_enabled=enabled,
         object_reward_cfg=getattr(command, "object_reward_cfg", None),
     )
-    return InteractionTask(
+    return SittingTask(
         "g1_sitting" if enabled else "g1_shared_tracking", motion, mdp, SharedDynamics(), cfg,
         modeled_entities=("robot", "chair") if enabled else ("robot",),
     )

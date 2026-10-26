@@ -3,7 +3,7 @@ from mjlab.tasks.registry import register_mjlab_task
 
 from ..rl.runner import SuperMimicRunner
 from .g1_tracking.rl_cfg import make_supermimic_runner_cfg
-from .interaction.env_cfgs import make_env_cfg
+from .sitting.env_cfgs import make_env_cfg
 
 register_mjlab_task(
     task_id="Mjlab-SuperMimic-SharedTracking-Unitree-G1",
