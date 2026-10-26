@@ -25,6 +25,7 @@ Original implementation: **Chong Zhang** (ETH Zurich). Code license: [MIT](LICEN
 | `supermimic/assets/g1/` | G1 MJCF, mjlab entity, actuator settings, joint ordering and differentiable forward kinematics |
 | `supermimic/tasks/g1_tracking/` | Current task's scene, simulation, MDP and learning configuration |
 | `supermimic/tasks/interaction/` | Shared tracking/sitting task heads, object references, dynamic chair and randomization |
+| `supermimic/tasks/entities/` | Multi-object scenes, raw entity observations and object reference trajectories for the critic |
 | `supermimic/tasks/` | Native mjlab task registration, dimensions and checkpoint contract |
 | `supermimic/mdp/` | Commands, actions, events, observations, rewards, termination and state/dynamics functions |
 | `motion_data/__init__.py` | NumPy-only shared NPZ schema, validation, loading and saving |
@@ -32,6 +33,7 @@ Original implementation: **Chong Zhang** (ETH Zurich). Code license: [MIT](LICEN
 | `supermimic/motion.py` | Standard NPZ loading, named G1 joint mapping and 50 Hz reference resampling |
 | `supermimic/rl/` | Runner, replay adapter, world model, imagined BPTT updates and critic |
 | `supermimic/rl/shared_world_model.py`, `shared_replay.py` | Shared robot/object physics, geometry encoder and portable replay across tasks |
+| `supermimic/rl/entity_*.py` | Shared entity interaction model, Actor/Critic scene encoders, entity state and portable replay |
 | `supermimic/scripts/evaluate.py` | Full motion-library scoring and trajectory recording |
 | `tools/` | Setup, data download, URDF-to-MJCF conversion, checks, plotting and rendering |
 | `docker/` | Optional plain Python/uv container; no simulator SDK image |
@@ -51,11 +53,11 @@ tools/download_data.sh         # downloads raw motions/assets, creates MJCF and 
 uv run python -c "import torch; print(torch.cuda.is_available(), torch.version.cuda)"
 ```
 
-A CUDA GPU is required for batched mjlab simulation. Default training uses 4096 worlds
-and a large replay buffer. On a smaller GPU, reduce `--env.scene.num-envs`,
+A CUDA GPU is required for batched mjlab simulation. Original tasks default to 4096 worlds;
+the new entity tasks default to 128 worlds and smaller batches. Reduce `--env.scene.num-envs`,
 `--agent.buffer-steps`, `--agent.wm-batch` and `--agent.pi-batch`.
 
-The package registers three tasks with mjlab through
+The package registers five tasks with mjlab through
 `[project.entry-points."mjlab.tasks"]`:
 
 | Task suffix after `Mjlab-SuperMimic-` | Actor observation | Replay state | WM input → increment | Critic input |
@@ -63,8 +65,11 @@ The package registers three tasks with mjlab through
 | `Tracking-Unitree-G1` — original baseline | 93 | 71 | 133 → 70 | 914 |
 | `SharedTracking-Unitree-G1` — no object, shared dynamics | 93 | 84 | 228 → 82 | 1075 |
 | `Sitting-Unitree-G1` — one dynamic chair | 99 | 84 | 228 → 82 | 1075 |
+| `EntityTracking-Unitree-G1` — entity model, no default objects | 197 raw | 175 | entity tokens → 166 | 2242 raw → 1042 encoded |
+| `EntitySitting-Unitree-G1` — entity model, target chair and optional extra objects | 197 raw | 175 | entity tokens → 166 | 2242 raw → 1042 encoded |
 
-Dimensions assume the default ten future reference frames. SharedTracking and Sitting
+Dimensions assume ten future reference frames; entity rows also assume capacity 8.
+SharedTracking and Sitting
 reuse the same world-model checkpoint and geometry encoder. Their policies remain
 task-specific. As in HDMI, the stock `train` and `play`
 commands create an ordinary `ManagerBasedRlEnv`; no project launcher or custom
@@ -90,7 +95,37 @@ uses native auto-reset. Real and imagined trajectories share the same tensor
 observation, reward and termination heads. See [CONTEXT.md](CONTEXT.md) and
 [ADR 0002](docs/adr/0002-native-mjlab-entrypoints.md) for the contracts and timing.
 
-### Shared world model and sitting
+### Multi-entity shared world model
+
+The `codex/shared-entity-world-model` implementation starts from
+`f714fc134d0f8e79ea908da5dc809a194932aaea`. The three existing tasks retain their interfaces.
+`EntityTracking` and `EntitySitting` add a shared graph of robot, object and ground tokens:
+256-wide tokens, four interaction layers, and shared object encoders/output heads.
+The same weights support varying numbers of objects. Each task keeps its own Actor,
+Critic, references and reward. Only object pose tracking is added to the original reward.
+
+At capacity 8, replay stores state **175** and context **441**. Actor observations contain
+**197 raw values** per frame; its scene encoder produces a **221-value encoded frame**.
+Critic receives **792 current values + 730 robot references + 720 object references**,
+then encodes the scene before its 1042-input value MLP. Geometry encoders are separate
+for the Actor, Critic and world model; raw points/normals are shared, learned codes are
+recomputed. Default training uses 128 worlds, 256 replay steps and WM/Actor batches of 128.
+
+```bash
+uv run train Mjlab-SuperMimic-EntitySitting-Unitree-G1 \
+  --env.commands.motion.motion-dir data/motions/sitting/sitting__acadian_rustic_wooden_dining_chair_distressed_white__000.npz \
+  --agent.experiment-name entity_sitting --gpu-ids '[0]' --log-root logs
+```
+
+Prepare the chair collision cache first. Add physical boxes, fixed obstacles or other
+mesh assets through `--env.commands.motion.extra-objects-file scene_objects.json`.
+Current NPZs provide one target object trajectory; extra objects participate in physics
+but have no target trajectory. The new model does not implicitly load f714's single-object
+weights. See [the entity interface and usage guide](docs/entity-world-model.md) for exact
+dimensions, JSON configuration, playback, checkpoint transfer and replay compatibility.
+Software/learning smoke checks do not establish trained sitting performance or generalization.
+
+### Legacy single-object shared world model and sitting
 
 `Sitting` adds a free-moving chair, its relative pose in the actor observation,
 object state and future reference in the critic, and one object-pose tracking reward.
@@ -319,11 +354,11 @@ uv run python -m supermimic.scripts.evaluate \
 uv run python tools/render.py traj.npz out.mp4 --clips dance2_subject1 --seconds 10
 ```
 
-The two tracking tasks default to `data/motions/lafan1`; Sitting defaults to
+All three tracking tasks default to `data/motions/lafan1`; Sitting and EntitySitting default to
 `data/motions/sitting`. Select another converted
 directory with train's `--env.commands.motion.motion-dir`, play's `SUPERMIMIC_MOTION_DIR`,
-or evaluation's `--motion-dir`. Only `Mjlab-SuperMimic-Sitting-Unitree-G1` adds the dynamic
-chair. Its motion loader selects clips matching one collision geometry and scale;
+or evaluation's `--motion-dir`. Both sitting task variants add a dynamic target
+chair. Their motion loaders select clips matching one collision geometry and scale;
 the full library is not treated as interchangeable chair shapes in one simulation batch.
 
 Native mjlab stores runs under `log_root/experiment_name/<timestamp>[_run_name]`.
@@ -337,7 +372,7 @@ are exported under `replays/`. These auxiliary files stay outside the resume sea
 
 Use `uv run train Mjlab-SuperMimic-Tracking-Unitree-G1 --help` for all native options.
 The first iterations include compilation; `--agent.no-compile True` is useful for short
-checks. Default batches remain 4096 environments, 1000 replay steps per world,
+checks. Original-task default batches remain 4096 environments, 1000 replay steps per world,
 8-step model fitting, 32-step imagination, 10 model batches of 2048 windows,
 4096 imagined rollouts and 500 world-model-only iterations. `--agent.amp none`
 disables BF16; TF32 remains enabled for FP32 matmuls. Training is single-GPU.

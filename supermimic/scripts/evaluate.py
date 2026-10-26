@@ -17,7 +17,7 @@ import torch
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.rl import RslRlVecEnvWrapper
 from mjlab.tasks.registry import load_env_cfg, load_rl_cfg, load_runner_cls
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 from supermimic.tasks import TASK_ID  # Registers the external task.
 from supermimic.rotations import mat_to_quat
@@ -61,7 +61,8 @@ def evaluate(env, runner, record=None):
     finished = torch.zeros(native.num_envs, dtype=torch.bool, device=native.device)
     failed = torch.zeros_like(finished)
     trajectory = {"root_p": [], "root_quat": [], "q": [], "f": [], "alive": []}
-    object_enabled = getattr(command.cfg, "object_enabled", False)
+    object_enabled = (bool(command.object_entity_names) if hasattr(command, "object_entity_names")
+                      else getattr(command.cfg, "object_enabled", False))
     if object_enabled:
         trajectory.update(object_p=[], object_quat=[])
     while not bool(finished.all()):
@@ -93,6 +94,14 @@ def evaluate(env, runner, record=None):
         object_reference = (dict(ref_object_p=motion.object_p.cpu().numpy(),
                                  ref_object_quat=mat_to_quat(motion.object_R).cpu().numpy())
                             if object_enabled else {})
+        if hasattr(command, "object_entity_names"):
+            object_reference.update(
+                object_names=np.asarray(list(command.object_entity_names) + [""] * (
+                    command.dynamics.max_objects - len(command.object_entity_names))),
+                object_valid=motion.valid_mask.cpu().numpy(),
+                object_dynamic=motion.dynamic_mask.cpu().numpy(),
+                object_target=motion.target_mask.cpu().numpy(),
+            )
         np.savez_compressed(record, names=np.array(motion.names), **object_reference,
                             **{k: torch.stack(v).numpy() for k, v in trajectory.items()},
                             ref_root_p=motion.root_p.cpu().numpy(), ref_root_R=motion.root_R.cpu().numpy(),
@@ -105,6 +114,16 @@ def score_checkpoint(path: Path, args):
     checkpoint = torch.load(path, map_location="cpu", weights_only=False)
     policy_cfg = _policy_config(checkpoint)
     cfg = load_env_cfg(args.task, play=True)
+    if hasattr(cfg.commands["motion"], "max_objects"):
+        from supermimic.tasks.entities.assets import ObjectCfg
+        metadata = checkpoint.get("task", {})
+        schema = metadata.get("dynamics_schema", {})
+        if not isinstance(schema, dict) or schema.get("kind") != "g1-entity-physics":
+            raise ValueError("Entity evaluation requires an entity task checkpoint")
+        command = replace(cfg.commands["motion"], max_objects=schema["max_objects"],
+                          extra_objects=tuple(ObjectCfg(**obj) for obj in metadata.get("extra_objects", [])),
+                          extra_objects_file=None)
+        cfg = replace(cfg, commands={**cfg.commands, "motion": command})
     if args.motion_dir is not None:
         cfg.commands["motion"].motion_dir = str(args.motion_dir)
     if args.object_motion_file is not None:

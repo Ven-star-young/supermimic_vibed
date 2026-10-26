@@ -23,6 +23,9 @@ from .config import SuperMimicRunnerCfg
 from .models import Critic, Policy, TensorDictPolicy, WorldModel
 from .storage import ReplayBuffer
 from .shared_world_model import SharedDynamics, SharedWorldModel
+from .entity_state import EntityDynamics
+from .entity_world_model import EntityWorldModel
+from .entity_policy import EntityPolicy, EntityCritic
 
 
 class SuperMimicRunner:
@@ -43,8 +46,13 @@ class SuperMimicRunner:
         self.history_length, self.goal_frames = command.cfg.history_length, command.cfg.goal_frames
         self.goal_dim = self.task.goal_dim(self.goal_frames)
         networks.AMP_DTYPE = torch.bfloat16 if self.cfg.amp == "bf16" else None
-        self.pi = Policy(self.dims.observation, self.goal_dim, hist=self.history_length,
-                         action_dim=self.dims.action).to(self.device)
+        if isinstance(self.dynamics, EntityDynamics):
+            self.pi = EntityPolicy(command.geometry_bank, max_objects=self.dynamics.max_objects,
+                                   hist=self.history_length, goal_dim=self.goal_dim,
+                                   action_dim=self.dims.action).to(self.device)
+        else:
+            self.pi = Policy(self.dims.observation, self.goal_dim, hist=self.history_length,
+                             action_dim=self.dims.action).to(self.device)
         self.wm = self.critic = None
         self.buffer = self.replay_env = None
         self.shared_replay = None
@@ -75,7 +83,13 @@ class SuperMimicRunner:
         if self.wm is not None:
             return
         self.task.validate_model_coverage()
-        if isinstance(self.dynamics, SharedDynamics):
+        if isinstance(self.dynamics, EntityDynamics):
+            bank = self.env.unwrapped.command_manager.get_term("motion").geometry_bank
+            self.wm = EntityWorldModel(dynamics=self.dynamics, geometry_bank=bank).to(self.device)
+            if self.cfg.world_model_replays:
+                from .entity_replay import EntityReplay
+                self.shared_replay = EntityReplay(self.cfg.world_model_replays, bank, self.dynamics)
+        elif isinstance(self.dynamics, SharedDynamics):
             bank = self.env.unwrapped.command_manager.get_term("motion").geometry_bank
             self.wm = SharedWorldModel(dynamics=self.dynamics, geometry_bank=bank).to(self.device)
             if self.cfg.world_model_replays:
@@ -87,7 +101,13 @@ class SuperMimicRunner:
             self.wm = WorldModel(dynamics=self.dynamics).to(self.device)
         critic_goal_dim = (self.task.critic_goal_dim(self.goal_frames)
                            if hasattr(self.task, "critic_goal_dim") else self.goal_dim)
-        self.critic = Critic(self.dims.critic_features + critic_goal_dim).to(self.device)
+        if isinstance(self.dynamics, EntityDynamics):
+            self.critic = EntityCritic(bank, max_objects=self.dynamics.max_objects,
+                                       goal_frames=self.goal_frames, goal_dim=self.goal_dim).to(self.device)
+            if self.critic.in_dim != self.dims.critic_features + critic_goal_dim:
+                raise ValueError("Entity critic features and future-reference layout disagree")
+        else:
+            self.critic = Critic(self.dims.critic_features + critic_goal_dim).to(self.device)
         self.opt_wm = torch.optim.Adam(self.wm.parameters(), lr=self.cfg.lr)
         self.opt_pi = torch.optim.Adam(self.pi.parameters(), lr=self.cfg.lr, betas=(0.9, 0.95))
         self.opt_v = torch.optim.Adam(self.critic.parameters(), lr=self.cfg.lr)
@@ -110,6 +130,9 @@ class SuperMimicRunner:
         return tuple(torch.stack([pred[i] for pred in predictions], 1) for i in range(len(state)))
 
     def _wm_error(self, predicted, actual, mask, context=None):
+        if isinstance(self.wm, EntityWorldModel):
+            error = self.wm.error_per_sample(predicted, self.dynamics.unpack(actual), context, self.error_floor)
+            return (error * mask).sum() / actual.shape[0], error[:, -1]
         scale = torch.maximum(self.wm.out_norm.std(), self.error_floor)
         error = (self.wm.state_error(predicted, self.dynamics.unpack(actual)) / scale).square()
         if isinstance(self.wm, SharedWorldModel):
@@ -131,6 +154,9 @@ class SuperMimicRunner:
         return self.mdp.reward(state, frame, action, previous_action), self.mdp.soft_termination(state, frame)
 
     def _critic_input(self, state, frame, normalized_context, goal):
+        if isinstance(self.wm, EntityWorldModel):
+            features = self.mdp.critic_features(state, frame, normalized_context)
+            return torch.cat((features, goal, self.task.critic_goal(state, frame, self.goal_frames)), -1)
         if isinstance(self.wm, SharedWorldModel):
             geometry = self.wm.encode_geometry(normalized_context).detach()
             features = self.mdp.critic_features(state, frame, normalized_context, geometry=geometry)
@@ -148,14 +174,17 @@ class SuperMimicRunner:
             observations = self.env.get_observations()
             history = observations["policy_history"].reshape(env.N, self.history_length, self.dims.observation)
             goal = observations["goal"]
-            self.pi.obs_norm.update(history[:, -1])
-            self.pi.goal_norm.update(goal)
+            if isinstance(self.pi, EntityPolicy):
+                self.pi.update_normalizers(history[:, -1:], goal)
+            else:
+                self.pi.obs_norm.update(history[:, -1])
+                self.pi.goal_norm.update(goal)
             action = self.pi(history, goal)
             action = (action + self.cfg.action_noise * torch.randn_like(action)).clamp(-20, 20)
             out = env.step(action)
             self.buffer.add(out)
             initial, final = self.dynamics.unpack(out["s"]), self.dynamics.unpack(out["s1"])
-            if isinstance(self.wm, SharedWorldModel):
+            if isinstance(self.wm, (SharedWorldModel, EntityWorldModel)):
                 self.wm.update_normalizers(initial, out["a"], out["xi"], final)
             else:
                 self.wm.in_norm.update(self.wm.inputs(initial, out["a"], self.dynamics.normalize_context(out["xi"])))
@@ -176,7 +205,7 @@ class SuperMimicRunner:
                 prior = self.shared_replay.sample_windows(count, self.cfg.wm_window, self.device)
                 for key in window:
                     window[key] = torch.cat((window[key][count:], prior[key]), 0)
-        if isinstance(self.wm, SharedWorldModel):
+        if isinstance(self.wm, (SharedWorldModel, EntityWorldModel)):
             valid = window["mask"].bool()
             self.wm.update_normalizers(self.dynamics.unpack(window["s"][valid]), window["a"][valid],
                                        window["xi"][valid], self.dynamics.unpack(window["s1"][valid]))
@@ -263,7 +292,10 @@ class SuperMimicRunner:
             goals = torch.cat((initial_goal.unsqueeze(0), torch.stack(goals)), 0).flatten(0, 1)
             context = context.unsqueeze(0).expand(horizon + 1, -1, -1).flatten(0, 1)
             features = self.critic_input(states, frames, context, goals).view(horizon + 1, batch, -1)
-            self.critic.norm.update(features)
+            if isinstance(self.critic, EntityCritic):
+                self.critic.update_normalizers(features)
+            else:
+                self.critic.norm.update(features)
             values = self.critic(features)
             target, targets = values[-1], []
             for step in range(horizon - 1, -1, -1):
@@ -358,12 +390,15 @@ class SuperMimicRunner:
                       "train_cfg": self.train_cfg, "policy_config": self.policy_config,
                       "task": self.task.checkpoint_metadata(), "infos": infos,
                       "saved_at": time.strftime("%Y-%m-%d %H:%M:%S")}
+        if isinstance(self.dynamics, EntityDynamics):
+            checkpoint["entity_geometry"] = self.pi.geometry_bank.state_dict()
+            checkpoint["entity_network"] = self.wm.network_schema()
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(path.suffix + ".tmp")
         torch.save(checkpoint, temporary)
         os.replace(temporary, path)
-        if isinstance(self.wm, SharedWorldModel):
+        if isinstance(self.wm, (SharedWorldModel, EntityWorldModel)):
             self.save_world_model(path.parent / "world_models" / path.name)
             if self.cfg.export_world_model_replay and self.buffer is not None:
                 self.save_world_model_replay(path.parent / "replays" / path.name)
@@ -383,6 +418,16 @@ class SuperMimicRunner:
         location = "cpu" if actor_only else (map_location or "cpu")
         checkpoint = torch.load(path, map_location=location, weights_only=False)
         self.task.validate_checkpoint(checkpoint)
+        if isinstance(self.dynamics, EntityDynamics):
+            geometry = checkpoint.get("entity_geometry")
+            if geometry is None:
+                raise ValueError("Entity checkpoint lacks geometry assets")
+            bank = self.pi.geometry_bank
+            if geometry["keys"][:len(bank.keys)] != bank.keys:
+                raise ValueError("Entity checkpoint geometry mapping differs from the active scene")
+            # Equal keys must also mean equal raw geometry; keep the bank object
+            # shared by the command, actor, critic and world model.
+            bank.merge(geometry)
         legacy_args = checkpoint.get("args", {})
         policy_cfg = checkpoint.get("policy_config", {"history_length": legacy_args.get("hist", 10),
                                                        "goal_frames": legacy_args.get("goal_frames", 10),
@@ -395,6 +440,8 @@ class SuperMimicRunner:
         networks.AMP_DTYPE = torch.bfloat16 if amp == "bf16" else None
         if not actor_only:
             self._init_training_models()
+            if isinstance(self.wm, EntityWorldModel) and checkpoint.get("entity_network") != self.wm.network_schema():
+                raise ValueError("Incompatible entity network configuration for full resume")
             for key, module in (("wm", self.wm), ("critic", self.critic), ("opt_wm", self.opt_wm),
                                 ("opt_pi", self.opt_pi), ("opt_v", self.opt_v)):
                 if key not in checkpoint:
@@ -411,23 +458,37 @@ class SuperMimicRunner:
     def save_world_model(self, path):
         """Save task-independent weights, geometry encoder and normalization."""
         self._init_training_models()
-        if not isinstance(self.wm, SharedWorldModel):
+        if not isinstance(self.wm, (SharedWorldModel, EntityWorldModel)):
             raise ValueError("This task does not use the shared world-model schema")
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(path.suffix + ".tmp")
-        torch.save(dict(schema=self.dynamics.schema(), wm=self.wm.state_dict()), temporary)
+        payload = dict(schema=self.dynamics.schema(), wm=self.wm.state_dict())
+        if isinstance(self.wm, EntityWorldModel):
+            payload["network"] = self.wm.network_schema()
+        torch.save(payload, temporary)
         temporary.replace(path)
 
     def load_world_model(self, path):
         """Transfer physics without requiring matching actor or reward schemas."""
         self._init_training_models()
         checkpoint = torch.load(path, map_location=self.device, weights_only=True)
-        if not isinstance(self.wm, SharedWorldModel) or checkpoint.get("schema") != self.dynamics.schema():
+        compatible = (self.dynamics.compatible_physics_schema(checkpoint.get("schema"))
+                      if isinstance(self.wm, EntityWorldModel)
+                      else checkpoint.get("schema") == self.dynamics.schema())
+        if not isinstance(self.wm, (SharedWorldModel, EntityWorldModel)) or not compatible:
             raise ValueError("Incompatible shared world-model checkpoint")
+        if isinstance(self.wm, EntityWorldModel) and checkpoint.get("network") != self.wm.network_schema():
+            raise ValueError("Incompatible entity world-model network configuration")
         self.wm.load_state_dict(checkpoint["wm"], strict=True)
 
     def save_world_model_replay(self, path):
+        if isinstance(self.wm, EntityWorldModel):
+            from .entity_replay import save_entity_replay
+            if self.buffer is None:
+                raise ValueError("Collect entity transitions before exporting replay")
+            save_entity_replay(path, self.buffer, self.wm.geometry_bank, self.dynamics)
+            return
         from .shared_replay import save_replay
         if not isinstance(self.wm, SharedWorldModel) or self.buffer is None:
             raise ValueError("Collect shared-dynamics transitions before exporting replay")

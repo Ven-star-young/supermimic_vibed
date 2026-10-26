@@ -20,11 +20,17 @@ checkpoint save/load and policy inference; it has no command-line launcher.
 | `tasks/interaction/` | Optional rigid-object references, task heads, collision assets and physical randomization |
 | `rl/shared_world_model.py` | Task-independent state/integration, geometry encoder and masked normalization |
 | `rl/shared_replay.py` | Portable real transitions, episode masks and geometry ID remapping |
+| `tasks/entities/` | Variable-entity scenes, task references, raw observations, randomization and registration |
+| `rl/entity_state.py`, `entity_world_model.py` | Entity physics schema, masks, graph interactions and shared dynamics weights |
+| `rl/entity_policy.py`, `entity_replay.py` | Independent Actor/Critic scene encoders and portable entity replay |
 | `scripts/evaluate.py` | Full motion-library scoring and trajectory recording, separate from interactive `play` |
 
 Task IDs are `Mjlab-SuperMimic-Tracking-Unitree-G1` (baseline),
 `Mjlab-SuperMimic-SharedTracking-Unitree-G1` (shared physics, no object), and
-`Mjlab-SuperMimic-Sitting-Unitree-G1` (shared physics, one dynamic chair).
+`Mjlab-SuperMimic-Sitting-Unitree-G1` (shared physics, one dynamic chair), plus
+`Mjlab-SuperMimic-EntityTracking-Unitree-G1` and `Mjlab-SuperMimic-EntitySitting-Unitree-G1`
+(new entity interaction physics). The latter implementation branches from
+`f714fc134d0f8e79ea908da5dc809a194932aaea`; original task interfaces remain available.
 Configuration factories are independent and can be imported without loading motion
 files or initializing CUDA.
 The registered `MotionCommand` creates the task runtime when the environment loads
@@ -101,7 +107,7 @@ These are G1 task properties, not universal dimensions for future tasks.
 The world model predicts frame-local increments. Its features, integration, regression
 targets and loss must describe the same state.
 
-## Shared robot/object contract
+## Legacy single-object contract
 
 `SharedDynamics` fixes a common G1, 20 ms control interval, flat ground and at most
 one free rigid body. SharedTracking uses the same schema with object presence zero.
@@ -158,6 +164,43 @@ contact regimes or shapes may require additional real transitions. A moving-obje
 objective that the Actor must distinguish also requires Actor goal conditioning.
 See [shared-world-model.md](docs/shared-world-model.md) for implementation and CLI use.
 
+## Entity interaction contract
+
+`EntityDynamics` keeps G1 and an object axis: `71+13N` state values, `70+12N` output
+increments, and context `33+13N+3(N+2)^2+4`. At default capacity 8 these are 175, 166
+and 441. Per-object context contains mass, COM, inertia, valid/dynamic masks and a
+geometry ID; pair friction and a plane normal/offset follow. IDs are lookup metadata.
+All objects share encoder/head weights. Robot133, object90 and ground4 inputs become
+256-wide tokens with four interaction layers; edge inputs18/13 become32-wide messages.
+Geometry bank format2 stores 1024 metric xyz/unit-normal points and extents, not learned codes.
+
+Raw Actor observations are `93+13N` (197 default), retaining per-object pose9 and
+valid/dynamic/target/geometry metadata. The Actor's own geometry/set encoder produces
+128 scene features, hence221 per frame,2210 per ten-frame history and2242 after the
+32-value robot goal latent. Actor, Critic and WM geometry encoders have independent
+weights, and history stores raw observations so codes are recomputed after updates.
+
+Critic raw current features are `184+38N+3(N+2)^2+4` (792 default). It receives the
+730-value robot future goal and `N*K*9` object future poses (720 default). Per-object
+future tracks are encoded to32 and included in scene interaction; scene128 + robot184
++ robot goal730 form the1042-input value MLP. Current-object features and all future
+poses use actual G1-relative frames. Target flags/references never enter the WM.
+
+EntitySitting currently assigns the existing NPZ's one object trajectory to target
+slot0. Additional configured dynamic bodies/static obstacles are real simulation
+entities, but have no target trajectory; there is no multi-target NPZ parser yet.
+Their physical effects still reach all three networks. Scene JSON or Python ObjectCfg
+records add bodies; reference clocks, robot rewards and termination remain shared.
+Only the target-object pose reward is added. Dynamic mass/friction use5–15kg/.3–1.2;
+evaluation uses10kg/1.0 for the chair and configured values for extra objects.
+Object-object effective friction is the componentwise max; ground copies are isolated.
+
+Entity full checkpoints use schema4 and preserve geometry mappings and scene identity.
+Standalone entity WM weights support changing capacity; archived replay requires an
+exact schema including capacity. Old single-object model weights are not implicitly
+converted. New defaults are128 training worlds,256 replay steps and WM/Actor batches128.
+See [entity-world-model.md](docs/entity-world-model.md) for layouts, CLI, JSON and limits.
+
 ## Physical and imagined rollouts
 
 Both paths use the same tensor MDP configuration for observations, rewards and
@@ -204,8 +247,8 @@ Unmodeled extra scene entities remain rejected.
 
 ## Checkpoints and validation
 
-Full checkpoints require task metadata: baseline schema version 2 and interaction
-schema version 3. Incompatible layouts and missing metadata are rejected before loading.
+Full checkpoints require task metadata: baseline schema version 2, legacy interaction
+schema version 3, and entity schema version 4. Incompatible layouts and missing metadata are rejected before loading.
 Earlier 99-observation policies cannot load into either current task; their observation
 semantics differ from Sitting's object-relative values. No implicit weight slicing or conversion is
 performed. See [ADR 0003](docs/adr/0003-paper-observation-contract.md).
