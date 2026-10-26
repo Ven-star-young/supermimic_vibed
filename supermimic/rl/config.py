@@ -64,3 +64,11 @@ class SuperMimicRunnerCfg(RslRlBaseRunnerCfg):
     """Disable torch.compile for debugging and short smoke runs."""
     amp: Literal["none", "bf16"] = "bf16"
     """CUDA MLP autocast precision; state and reward calculations remain FP32."""
+    world_model_file: str | None = None
+    """Initialize a shared world model without loading a task's policy/critic."""
+    world_model_replays: tuple[str, ...] = ()
+    """Prior shared-dynamics replay archives to mix into world-model updates."""
+    world_model_replay_fraction: float = 0.5
+    """Fraction of world-model windows drawn from prior archives, when provided."""
+    export_world_model_replay: bool = False
+    """Export real transitions and geometry alongside each training checkpoint."""

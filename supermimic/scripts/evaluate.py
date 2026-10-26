@@ -28,7 +28,8 @@ def build_parser():
     parser.add_argument("--task", default=TASK_ID)
     parser.add_argument("--checkpoint-file", "--ckpt", dest="checkpoint_file")
     parser.add_argument("--run-dir", type=Path)
-    parser.add_argument("--motion-dir", type=Path, default=Path("data/motions/lafan1"))
+    parser.add_argument("--motion-dir", type=Path, help="Override the selected task's default motion directory")
+    parser.add_argument("--object-motion-file", type=str, help="Select the sitting scene's object geometry")
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--watch", action="store_true")
     parser.add_argument("--every", type=int, default=1, help="evaluate every Nth saved checkpoint")
@@ -50,8 +51,6 @@ def evaluate(env, runner, record=None):
     native = env.unwrapped
     command = native.command_manager.get_term("motion")
     task, motion = command.task, command.motion
-    if record is not None and task.name != "g1_tracking":
-        raise ValueError("Add an object-task trajectory recorder before recording this task")
     policy = runner.get_inference_policy(device=native.device)
     ids = torch.arange(native.num_envs, device=native.device)
     if native.num_envs != len(motion.names):
@@ -62,6 +61,9 @@ def evaluate(env, runner, record=None):
     finished = torch.zeros(native.num_envs, dtype=torch.bool, device=native.device)
     failed = torch.zeros_like(finished)
     trajectory = {"root_p": [], "root_quat": [], "q": [], "f": [], "alive": []}
+    object_enabled = getattr(command.cfg, "object_enabled", False)
+    if object_enabled:
+        trajectory.update(object_p=[], object_quat=[])
     while not bool(finished.all()):
         alive = ~finished
         if record is not None:
@@ -71,6 +73,9 @@ def evaluate(env, runner, record=None):
             trajectory["q"].append(state[4].cpu())
             trajectory["f"].append(command.time_steps.cpu().clone())
             trajectory["alive"].append(alive.cpu())
+            if object_enabled:
+                trajectory["object_p"].append(state[6].cpu())
+                trajectory["object_quat"].append(mat_to_quat(state[7]).cpu())
         obs, reward, terminated, truncated, _ = native.step(policy(obs))
         returns += torch.where(alive, reward, 0)
         failed |= alive & terminated
@@ -85,7 +90,10 @@ def evaluate(env, runner, record=None):
     }
     if record is not None:
         Path(record).parent.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(record, names=np.array(motion.names),
+        object_reference = (dict(ref_object_p=motion.object_p.cpu().numpy(),
+                                 ref_object_quat=mat_to_quat(motion.object_R).cpu().numpy())
+                            if object_enabled else {})
+        np.savez_compressed(record, names=np.array(motion.names), **object_reference,
                             **{k: torch.stack(v).numpy() for k, v in trajectory.items()},
                             ref_root_p=motion.root_p.cpu().numpy(), ref_root_R=motion.root_R.cpu().numpy(),
                             ref_q=motion.q.cpu().numpy(), clip_start=motion.clip_start.cpu().numpy(),
@@ -97,12 +105,21 @@ def score_checkpoint(path: Path, args):
     checkpoint = torch.load(path, map_location="cpu", weights_only=False)
     policy_cfg = _policy_config(checkpoint)
     cfg = load_env_cfg(args.task, play=True)
-    cfg.commands["motion"].motion_dir = str(args.motion_dir)
+    if args.motion_dir is not None:
+        cfg.commands["motion"].motion_dir = str(args.motion_dir)
+    if args.object_motion_file is not None:
+        if not hasattr(cfg.commands["motion"], "object_motion_file"):
+            raise ValueError("--object-motion-file requires an interaction task")
+        cfg.commands["motion"].object_motion_file = args.object_motion_file
     cfg.commands["motion"].history_length = policy_cfg["history_length"]
     cfg.commands["motion"].goal_frames = policy_cfg["goal_frames"]
-    cfg.scene.num_envs = len(list(args.motion_dir.glob("*.npz")))
+    if hasattr(cfg.commands["motion"], "object_enabled"):
+        from supermimic.tasks.interaction.assets import select_motion_files
+        cfg.scene.num_envs = len(select_motion_files(cfg.commands["motion"]))
+    else:
+        cfg.scene.num_envs = len(list(Path(cfg.commands["motion"].motion_dir).glob("*.npz")))
     if not cfg.scene.num_envs:
-        raise ValueError(f"No standard motion NPZ files found in {args.motion_dir}")
+        raise ValueError(f"No standard motion NPZ files found in {cfg.commands['motion'].motion_dir}")
     native = ManagerBasedRlEnv(cfg, device=args.device)
     try:
         env = RslRlVecEnvWrapper(native)

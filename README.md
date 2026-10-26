@@ -24,12 +24,14 @@ Original implementation: **Chong Zhang** (ETH Zurich). Code license: [MIT](LICEN
 | `pyproject.toml`, `uv.lock` | Native Python package and locked runtime dependencies |
 | `supermimic/assets/g1/` | G1 MJCF, mjlab entity, actuator settings, joint ordering and differentiable forward kinematics |
 | `supermimic/tasks/g1_tracking/` | Current task's scene, simulation, MDP and learning configuration |
+| `supermimic/tasks/interaction/` | Shared tracking/sitting task heads, object references, dynamic chair and randomization |
 | `supermimic/tasks/` | Native mjlab task registration, dimensions and checkpoint contract |
 | `supermimic/mdp/` | Commands, actions, events, observations, rewards, termination and state/dynamics functions |
 | `motion_data/__init__.py` | NumPy-only shared NPZ schema, validation, loading and saving |
 | `motion_data/converters/` | One raw-data converter per source: `grail.py`, `lafan1.py` |
 | `supermimic/motion.py` | Standard NPZ loading, named G1 joint mapping and 50 Hz reference resampling |
 | `supermimic/rl/` | Runner, replay adapter, world model, imagined BPTT updates and critic |
+| `supermimic/rl/shared_world_model.py`, `shared_replay.py` | Shared robot/object physics, geometry encoder and portable replay across tasks |
 | `supermimic/scripts/evaluate.py` | Full motion-library scoring and trajectory recording |
 | `tools/` | Setup, data download, URDF-to-MJCF conversion, checks, plotting and rendering |
 | `docker/` | Optional plain Python/uv container; no simulator SDK image |
@@ -53,8 +55,18 @@ A CUDA GPU is required for batched mjlab simulation. Default training uses 4096 
 and a large replay buffer. On a smaller GPU, reduce `--env.scene.num-envs`,
 `--agent.buffer-steps`, `--agent.wm-batch` and `--agent.pi-batch`.
 
-The package registers **`Mjlab-SuperMimic-Tracking-Unitree-G1`** with mjlab through
-`[project.entry-points."mjlab.tasks"]`. As in HDMI, the stock `train` and `play`
+The package registers three tasks with mjlab through
+`[project.entry-points."mjlab.tasks"]`:
+
+| Task suffix after `Mjlab-SuperMimic-` | Actor observation | Replay state | WM input → increment | Critic input |
+|---|---:|---:|---:|---:|
+| `Tracking-Unitree-G1` — original baseline | 93 | 71 | 133 → 70 | 914 |
+| `SharedTracking-Unitree-G1` — no object, shared dynamics | 93 | 84 | 228 → 82 | 1075 |
+| `Sitting-Unitree-G1` — one dynamic chair | 99 | 84 | 228 → 82 | 1075 |
+
+Dimensions assume the default ten future reference frames. SharedTracking and Sitting
+reuse the same world-model checkpoint and geometry encoder. Their policies remain
+task-specific. As in HDMI, the stock `train` and `play`
 commands create an ordinary `ManagerBasedRlEnv`; no project launcher or custom
 simulation loop is involved. `SuperMimicRunner` implements the framework's runner
 interface while retaining SuperMimic's learned dynamics and BPTT algorithm.
@@ -78,18 +90,26 @@ uses native auto-reset. Real and imagined trajectories share the same tensor
 observation, reward and termination heads. See [CONTEXT.md](CONTEXT.md) and
 [ADR 0002](docs/adr/0002-native-mjlab-entrypoints.md) for the contracts and timing.
 
-### Extending toward object interaction
+### Shared world model and sitting
 
-Add assets to a new task's `cfg.scene.entities` and native `ContactSensorCfg`
-instances to `cfg.scene.sensors`. Ordinary mjlab environments support these scenes;
-the robot-only replay adapter rejects training when unmodeled entities are present.
-Object-conditioned training additionally requires:
+`Sitting` adds a free-moving chair, its relative pose in the actor observation,
+object state and future reference in the critic, and one object-pose tracking reward.
+The existing robot rewards, termination conditions, 29 actions and 730-value robot
+goal remain unchanged. Chair mass is randomized to 5–15 kg and G1–chair sliding
+friction to 0.3–1.2 per episode; evaluation uses 10 kg and 1.0.
 
-1. Object reference data, state layout, dynamics features/integration/losses and schema.
-2. Goals, observations, context, reset behavior and critic inputs for robot and object.
-3. Shared rewards and hard/soft termination. Contact-dependent imagined rewards need
-   a differentiable predictor or approximation; real sensors alone cannot supply it.
-4. Checks of terminal transitions, partial resets, model fitting and reward gradients.
+`SharedTracking` and `Sitting` share 84-value states, 82 predicted increments and
+the same 228-value dynamics input. The 47 stored context values contain 45 physical
+values, presence and a geometry ID; the ID only selects geometry and never enters
+the neural network. A PointNet jointly trained with dynamics produces 64 shape
+features, accompanied by three metric extents. Reference trajectories and rewards
+stay outside the world model.
+
+One native simulation run uses one chair geometry and matching motion clips. Different
+chair runs can export real transitions and mix their replays when training the shared
+model. This does not establish generalization to unseen geometry or new contact modes.
+See [the interface and usage guide](docs/shared-world-model.md) for dimensions,
+checkpoint transfer, replay mixing and current validation limits.
 
 `BuiltinPositionActuatorCfg` preserves torque caps but has no equivalent to Isaac
 Lab's `velocity_limit_sim`. Motor speed limits remain metadata rather than a
@@ -216,10 +236,10 @@ GRAIL **机器人原四元数是 xyzw，椅子原四元数已经是 wxyz**，转
 `(125 - 1) / 25 = 4.96 s`。采样只取 20 ms 时间网格内的点，不向源动作末尾外推。
 训练要求重采样后至少两帧，纯运动学回放仍可读取单帧。
 
-此次数据接入保持单帧策略观测 **93 维**、每个未来参考帧 goal **73 维**，以及
-world model、奖励和场景逻辑不变。椅子姿态/网格保存在 NPZ 中供回放使用，当前
-G1 tracking 训练场景尚无椅子碰撞或支撑。因此 sitting 可用于验证参考输入，但完整的
-坐椅子物理训练还需要物体场景和交互任务支持。
+原 `Tracking` 任务保持单帧策略观测 **93 维**、每个未来参考帧 goal **73 维**，
+仍只读取机器人参考。新 `Sitting` 任务读取同一 NPZ 中的机器人和物体数据，
+同步重采样到 50 Hz，并建立动态椅子场景；其 Actor 新增物体相对位姿 **6 维**。
+选择数据目录不会自动切换任务，需要使用对应任务 ID。
 
 可先在 CPU 上检查一段 sitting 的训练输入，不启动物理仿真：
 
@@ -260,8 +280,8 @@ uv run python tools/check_collisions.py /path/to/motion.npz --render
 `results/analysis/collision/<clip>/`。检查仅按参考姿态计算碰撞，不推进动力学。
 通用 `tools/replay_motion.py` 仍用于纯运动学回放。
 
-`motion_data.collision.add_object_geoms(spec, body, clip, parts)` 可把视觉几何和凸碰撞
-几何加入一个静态或 mocap 物体，统一施加一次 `object_scale`；它不设置动态物体惯量。
+`motion_data.collision.add_object_geoms(spec, body, clip, parts)` 把视觉几何和凸碰撞
+几何加入指定 body，统一施加一次 `object_scale`；动态椅子的惯量由交互任务资产层设置。
 缓存缺失或损坏会明确报错，不会退回整个椅子的凸包。分解阈值是近似算法参数，不能
 视为已保证的表面误差；复杂椅子还需检查凸块数量、坐人空腔、座面支撑和参考动作穿透。
 详见 [碰撞审计](docs/collision-audit.md)。
@@ -299,16 +319,21 @@ uv run python -m supermimic.scripts.evaluate \
 uv run python tools/render.py traj.npz out.mp4 --clips dance2_subject1 --seconds 10
 ```
 
-Training, `play` and evaluation default to `data/motions/lafan1`. Select another converted
+The two tracking tasks default to `data/motions/lafan1`; Sitting defaults to
+`data/motions/sitting`. Select another converted
 directory with train's `--env.commands.motion.motion-dir`, play's `SUPERMIMIC_MOTION_DIR`,
-or evaluation's `--motion-dir`. For GRAIL input checks, explicitly select
-`data/motions/sitting`; this selects the robot reference without adding a chair to the scene.
+or evaluation's `--motion-dir`. Only `Mjlab-SuperMimic-Sitting-Unitree-G1` adds the dynamic
+chair. Its motion loader selects clips matching one collision geometry and scale;
+the full library is not treated as interchangeable chair shapes in one simulation batch.
 
 Native mjlab stores runs under `log_root/experiment_name/<timestamp>[_run_name]`.
 Checkpoints are `model_<iteration>.pt`; each contains policy, world model, critic,
 optimizer state and task metadata. `params/env.yaml` and `params/agent.yaml` record
 resolved configuration. Resuming uses standard `--agent.resume True`, `--agent.load-run`
 and `--agent.load-checkpoint`; replay is refilled before any resumed model updates.
+Shared-dynamics runs also save independent physics weights under `world_models/`.
+With `--agent.export-world-model-replay True`, transitions and their geometry bank
+are exported under `replays/`. These auxiliary files stay outside the resume search.
 
 Use `uv run train Mjlab-SuperMimic-Tracking-Unitree-G1 --help` for all native options.
 The first iterations include compilation; `--agent.no-compile True` is useful for short
@@ -319,7 +344,8 @@ disables BF16; TF32 remains enabled for FP32 matmuls. Training is single-GPU.
 
 Quantitative evaluation starts each clip at its first frame, disables randomization
 and observation/action noise, and scores until the first failure or clip completion.
-It evaluates every clip in the selected directory; no train/test split is inferred.
+It evaluates the clips selected by the task: every clip for tracking, or the matching
+single-geometry subset for Sitting. No train/test split is inferred.
 It loads the policy only, without training replay or optimizers. `--watch` scans for
 new checkpoints; use a separate GPU or evaluate after training for timing comparisons.
 
@@ -339,7 +365,7 @@ docker exec -it supermimic ./run_train.sh lafan1_mjlab --gpu-ids 0
 This path requires Docker and NVIDIA Container Toolkit. GPU index `0` inside the container
 refers to the GPU selected by `docker/run_container.sh`.
 
-## Algorithm and retained choices
+## Baseline algorithm and retained choices
 
 * G1 29-DoF with BeyondMimic actuator parameters: 10 Hz natural frequency, damping ratio 2,
   motor armatures and action scale `0.25 * torque_limit / stiffness`.
@@ -399,9 +425,12 @@ controlled speed comparison. No corresponding mjlab training result is claimed h
 
 See [MILESTONES.md](MILESTONES.md) for the original run log. Those policies used the former
 99-dimensional observation and cannot load into the current task. Checkpoints now require
-task schema version 2; version 1 and checkpoints without task metadata are rejected.
+baseline task schema version 2; version 1 and checkpoints without task metadata are rejected.
 There is no automatic weight slicing or legacy conversion. Train a new policy for the
-93-dimensional observation contract; the historical scores do not validate this change.
+current task contract; the historical scores do not validate this change. The new
+Sitting Actor also has 99 values, but its six additional values describe the chair,
+so it is not compatible with the historical 99-value observation. Interaction tasks
+use full-checkpoint schema version 3 and a separate shared-dynamics schema.
 
 ## Attribution and licenses
 

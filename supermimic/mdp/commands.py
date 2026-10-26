@@ -100,11 +100,9 @@ class MotionCommand(CommandTerm):
 
     def __init__(self, cfg: MotionCommandCfg, env):
         super().__init__(cfg, env)
-        from ..tasks.g1_tracking.task import build_task
-
         if cfg.goal_frames < 1 or cfg.history_length < 1 or not 0 < cfg.gamma < 1:
             raise ValueError("Goal/history lengths must be positive and gamma must lie in (0, 1)")
-        self.task = build_task(cfg.motion_dir, device=self.device, play=cfg.play, cfg=env.cfg)
+        self.task = self.build_task()
         self.motion, self.mdp, self.dynamics = self.task.motion, self.task.mdp, self.task.dynamics
         if not math.isclose(env.step_dt, self.motion.control_dt):
             raise ValueError("Motion sample rate must match the environment control period")
@@ -120,6 +118,13 @@ class MotionCommand(CommandTerm):
         self._last_step = torch.full_like(self.time_steps, env.common_step_counter)
         self._reset_frames = torch.full_like(self.time_steps, -1)
         self._forward_step = -1
+
+    def build_task(self):
+        from ..tasks.g1_tracking.task import build_task
+        return build_task(self.cfg.motion_dir, device=self.device, play=self.cfg.play, cfg=self._env.cfg)
+
+    def reset_reference(self, env_ids):
+        reset_robot_to_reference(self._env, env_ids, self.cfg.reset_cfg, command=self)
 
     @property
     def command(self):
@@ -157,7 +162,7 @@ class MotionCommand(CommandTerm):
         frames[explicit] = queued[explicit]
         self.curriculum.reset(env_ids, frames)
         self._reset_frames[env_ids] = -1
-        reset_robot_to_reference(self._env, env_ids, self.cfg.reset_cfg, command=self)
+        self.reset_reference(env_ids)
         self._last_step[env_ids] = self._env.common_step_counter
         self._forward_step = -1
 

@@ -3108,6 +3108,7 @@ dependencies = [
     { name = "pillow", version = "12.3.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "pillow", version = "13.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "torch" },
+    { name = "trimesh" },
 ]
 
 [package.optional-dependencies]
@@ -3137,6 +3138,7 @@ requires-dist = [
     { name = "pillow", specifier = ">=10" },
     { name = "scipy", marker = "extra == 'motion'", specifier = ">=1.14" },
     { name = "torch", specifier = ">=2.7.0" },
+    { name = "trimesh", specifier = ">=4" },
     { name = "usd-core", marker = "extra == 'motion'", specifier = ">=25.5" },
 ]
 provides-extras = ["motion"]
