@@ -15,7 +15,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--num_envs", type=int, default=8)
     parser.add_argument("--device", default="cuda:0")
-    parser.add_argument("--motion_dir", help="Optional LAFAN1 CSV directory; default: synthetic motion")
+    parser.add_argument("--motion_dir", help="Optional standard motion NPZ directory; default: synthetic motion")
     args = parser.parse_args()
     if args.num_envs < 2:
         parser.error("--num_envs must be at least 2 for a partial reset check")

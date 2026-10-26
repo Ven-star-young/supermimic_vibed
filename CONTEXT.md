@@ -10,7 +10,10 @@ checkpoint save/load and policy inference; it has no command-line launcher.
 
 | Layer | Owns |
 |---|---|
+| `motion_data/` (repository root) | NumPy-only standard motion NPZ schema, validation and file IO |
+| `motion_data/converters/` | One source-specific raw-data conversion script per dataset |
 | `assets/` | Native robot/object models, joint names, actuators and differentiable FK |
+| `motion.py` | Standard NPZ loading, G1 joint-name mapping, reference resampling and FK |
 | `tasks/` | mjlab task registration, native manager configuration, task dimensions and checkpoint schema |
 | `mdp/` | Native commands/actions/events, shared tensor observation/reward/termination heads and state/dynamics |
 | `rl/` | Runner, replay adapter, models, storage, model fitting, imagined BPTT and critic updates |
@@ -21,7 +24,50 @@ independent and can be imported without loading motion files or initializing CUD
 The registered `MotionCommand` creates the task runtime when the environment loads
 its managers. The pure `build_task()` API supports tensor/model use without a simulator.
 
+## Motion input
+
+Raw-source handling belongs in `motion_data/converters/`: `grail.py` handles the GRAIL
+robot/object exports and `lafan1.py` handles G1 CSVs. Invoke each with
+`python -m motion_data.converters.<source>`. New sources add a converter that writes
+the same NPZ format; downstream code does not branch on dataset identity.
+
+`motion_data/__init__.py` supplies `validate_motion`, `load_motion` and `save_motion`
+without importing Torch or mjlab. Clips use metres, radians, Z-up world coordinates,
+wxyz quaternions and named scalar joints. Required fields are `fps`, `root_pos`,
+`root_quat`, `joint_pos` and `joint_names`; optional object poses, scale and mesh fields
+remain available to the shared kinematic replay tool. Arrays never require pickle.
+The existing NPZ format is unchanged.
+
+`MotionLib` accepts only these NPZs and maps `joint_names` to `G1_JOINT_NAMES`, rejecting
+missing or extra joints. It reads each clip's own `fps` and resamples the robot poses
+on the 50 Hz control clock: linear interpolation for positions/joint angles and SLERP
+for root orientation, followed by velocities at 20 ms intervals and tracked-body FK.
+It never changes playback speed by relabeling a file's frame rate. A GRAIL clip with
+125 frames at 25 Hz becomes 249 frames at 50 Hz, with the same 4.96 s first-to-last
+sample span. Samples do not extrapolate beyond the source's final timestamp. Training
+requires at least two resampled frames; the portable format and kinematic replay allow
+a single frame.
+
+Training, play and evaluation default to `data/motions/lafan1`; the downloader builds
+these NPZs after fetching the original CSVs and robot assets. GRAIL clips are selected
+explicitly from `data/motions/sitting`. Object fields in these files are currently used
+for kinematic replay. Loading a sitting reference does not create a physical chair or
+extend the robot-only task. The policy/goal dimensions, world model, rewards and scene
+remain governed by the existing contracts below.
+
 ## State and action
+
+Collision inspection and object asset preparation use `motion_data/collision.py` and
+`tools/prepare_collisions.py` / `tools/check_collisions.py`. Convex object parts retain
+the original object frame; visual and collision geometry each apply `object_scale`
+once. Cache keys include geometry, the complete decomposition recipe and engine version.
+Geometry preparation does not add objects to the training task or change its state layout.
+G1 omits both rubber-hand visual and collision geometries. Its 29 joints, including the
+wrists, and fixed hand-body masses/inertias remain unchanged; hand contact is not modeled.
+`make_g1_spec(interaction_collisions=True)` and the matching entity-config option add
+full-foot object colliders. Ground uses collision bit 1, objects bit 2; the original
+foot spheres still contact only the ground. Robot self-collisions remain disabled.
+The tracking task uses the base collision profile unless explicitly configured otherwise.
 
 The G1 state is `S = (p, R, v, w, q, qd)`: world pelvis-link position, rotation matrix,
 world linear/angular link-origin velocity, and 29 named joint positions/velocities.

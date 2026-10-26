@@ -7,6 +7,7 @@ the action scale is 0.25 * effort_limit / stiffness, as in BeyondMimic.
 
 from __future__ import annotations
 
+from functools import partial
 
 import mujoco
 from mjlab.actuator import BuiltinPositionActuatorCfg
@@ -132,11 +133,47 @@ def _actuators() -> tuple[BuiltinPositionActuatorCfg, ...]:
 G1_VELOCITY_LIMITS = {name: motor_of(name)[1] for name in G1_JOINT_NAMES}
 
 
-def make_g1_spec() -> mujoco.MjSpec:
+def _add_interaction_collisions(spec: mujoco.MjSpec) -> None:
+    """Fill foot coverage for objects without changing foot-ground contact.
+
+    Environment geoms use contype=1 for ground and contype=2 for objects,
+    conaffinity=0. Robot contype remains zero, so self-collisions stay disabled.
+    """
+    feet = {f"{side}_ankle_roll_link" for side in ("left", "right")}
+    for geom in spec.geoms:
+        if geom.contype != 0 or geom.conaffinity != 0:
+            is_foot_sphere = (
+                geom.parent.name in feet and geom.type == mujoco.mjtGeom.mjGEOM_SPHERE
+            )
+            geom.conaffinity = 1 if is_foot_sphere else 3
+            geom.group = 3
+
+    for side in ("left", "right"):
+        body_name = f"{side}_ankle_roll_link"
+        # Reuse the retargeting revision's foot mesh and link frame. Explicit
+        # body inertials remain authoritative; this geom adds no mass.
+        spec.body(body_name).add_geom(
+            name=f"{body_name}_object_collision",
+            type=mujoco.mjtGeom.mjGEOM_MESH,
+            meshname=body_name,
+            contype=0,
+            conaffinity=2,
+            group=3,
+            mass=0,
+            density=0,
+            friction=[1.0, 0.005, 0.0001],
+            condim=3,
+        )
+
+
+def make_g1_spec(*, interaction_collisions: bool = False) -> mujoco.MjSpec:
     """Load the original retargeting robot directly as MJCF, without USD.
 
     Use the same source for simulation and differentiable FK. Never substitute a
     bundled G1 asset: a different revision can change motion-reference geometry.
+    Rubber-hand geometry is omitted; fixed-link inertias are retained.
+    Opt into interaction collisions for full-foot object contact;
+    callers must assign objects contype=2 and ground contype=1, conaffinity=0.
     """
     if not MJCF_PATH.is_file():
         raise FileNotFoundError(
@@ -155,13 +192,16 @@ def make_g1_spec() -> mujoco.MjSpec:
             geom.conaffinity = 1
             geom.friction = [1.0, 0.005, 0.0001]
             geom.condim = 3
+    if interaction_collisions:
+        _add_interaction_collisions(spec)
     return spec
 
 
-def make_g1_robot_cfg() -> EntityCfg:
+def make_g1_robot_cfg(*, interaction_collisions: bool = False) -> EntityCfg:
     """Return an independent config with all 29 joints position-controlled."""
     return EntityCfg(
-        spec_fn=make_g1_spec,
+        spec_fn=(partial(make_g1_spec, interaction_collisions=True)
+                 if interaction_collisions else make_g1_spec),
         init_state=EntityCfg.InitialStateCfg(
             pos=(0.0, 0.0, 0.76), joint_pos=DEFAULT_JOINT_POS.copy(), joint_vel={".*": 0.0}
         ),

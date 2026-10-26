@@ -39,7 +39,7 @@ def make_actions():
 
 def make_commands(play=False):
     return {"motion": MotionCommandCfg(
-        motion_dir=os.environ.get("SUPERMIMIC_MOTION_DIR", str(DATA_DIR / "lafan1_g1")),
+        motion_dir=os.environ.get("SUPERMIMIC_MOTION_DIR", str(DATA_DIR / "motions" / "lafan1")),
         play=play, reset_noise=not play,
                                         sampling_mode="start" if play else "adaptive")}
 

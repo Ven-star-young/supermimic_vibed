@@ -14,7 +14,7 @@ from .events import PhysicalContextCfg, ReferenceResetCfg, reset_robot_to_refere
 
 @dataclass(kw_only=True)
 class MotionCommandCfg(CommandTermCfg):
-    motion_dir: str = "data/lafan1_g1"
+    motion_dir: str = "data/motions/lafan1"
     play: bool = False
     goal_frames: int = 10
     history_length: int = 10

@@ -44,3 +44,4 @@ Path("data/source.json").write_text(json.dumps({
 print(f"Downloaded {len(list(Path('data/lafan1_g1').glob('*.csv')))} clips at {revision}")
 PY
 uv run python tools/urdf_to_mjcf.py
+uv run python -m motion_data.converters.lafan1 --overwrite

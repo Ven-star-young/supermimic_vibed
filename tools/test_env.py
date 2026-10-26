@@ -17,7 +17,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--num_envs", type=int, default=8)
     parser.add_argument("--device", default="cuda:0")
-    parser.add_argument("--motion_dir", help="Optional LAFAN1 CSV directory; default: synthetic motion")
+    parser.add_argument("--motion_dir", help="Optional standard motion NPZ directory; default: synthetic motion")
     parser.add_argument("--steps", type=int, default=32)
     args = parser.parse_args()
     with native_env(args.num_envs, device=args.device, motion_dir=args.motion_dir) as env:

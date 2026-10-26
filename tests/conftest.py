@@ -1,4 +1,4 @@
-"""Real G1 asset, generated motion CSVs and native mjlab integration fixtures."""
+"""Real G1 asset, generated motion NPZs and native mjlab integration fixtures."""
 
 from pathlib import Path
 

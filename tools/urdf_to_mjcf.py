@@ -1,8 +1,9 @@
-"""Compile the G1 URDF to an MJCF with a free-floating pelvis (same kinematics and inertias)."""
+"""Compile G1 with a free pelvis and no rubber-hand geometry; preserve inertias."""
 
 import os
 import re
 import sys
+import xml.etree.ElementTree as ET
 
 import mujoco
 
@@ -20,6 +21,15 @@ text = re.sub(
     text,
     flags=re.S,
 )
+# Hands are intentionally omitted from appearance and contact. Keep their fixed
+# links and explicit inertias so all 29 joint coordinates and dynamics stay valid.
+robot = ET.fromstring(text)
+for link in robot.findall("link"):
+    if link.get("name") in {"left_rubber_hand", "right_rubber_hand"}:
+        for element in list(link):
+            if element.tag in {"visual", "collision"}:
+                link.remove(element)
+text = ET.tostring(robot, encoding="unicode")
 open(tmp, "w").write(text)
 model = mujoco.MjModel.from_xml_path(tmp)
 mujoco.mj_saveLastXML(out, model)

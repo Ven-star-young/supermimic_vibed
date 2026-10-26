@@ -1,4 +1,4 @@
-"""Reference motion library: LAFAN1 G1 retargets resampled to 50 Hz, with FK of tracked bodies."""
+"""Standard NPZ reference clips resampled to 50 Hz, with FK of tracked bodies."""
 
 from __future__ import annotations
 
@@ -8,6 +8,8 @@ import os
 import numpy as np
 import torch
 
+from motion_data import load_motion
+from .assets.g1.g1_constants import G1_JOINT_NAMES
 from .assets.g1.kinematics import G1Kinematics
 from .rotations import mat_to_6d, quat_slerp, quat_to_mat, so3_log, yaw_mat
 
@@ -20,24 +22,36 @@ class MotionLib:
     bin_frames = BIN_FRAMES
     goal_feature_dim = 73
 
-    def __init__(self, files: list[str], kin: G1Kinematics, device: str, src_fps: float = 30.0):
+    def __init__(self, files: list[str], kin: G1Kinematics, device: str):
         if not files:
-            raise ValueError("No motion CSV files found; download data or provide --motion_dir")
+            raise ValueError("No standard motion NPZ files found; convert raw data with motion_data.converters first")
         self.device = device
         self.names = [os.path.splitext(os.path.basename(f))[0] for f in files]
         ps, qs, js = [], [], []
         lens = []
         for f in files:
-            raw = torch.tensor(np.loadtxt(f, delimiter=","), dtype=torch.float32)
-            p, q_xyzw, j = raw[:, :3], raw[:, 3:7], raw[:, 7:36]
-            quat = torch.cat((q_xyzw[:, 3:4], q_xyzw[:, :3]), -1)
-            # resample to 50 Hz
-            T_src = raw.shape[0]
+            if os.path.splitext(f)[1].lower() != ".npz":
+                raise ValueError(f"{f}: expected standard NPZ; use motion_data.converters for raw data")
+            clip = load_motion(f)
+            names = clip["joint_names"].tolist()
+            missing, extra = set(G1_JOINT_NAMES) - set(names), set(names) - set(G1_JOINT_NAMES)
+            if missing or extra:
+                raise ValueError(f"{f}: incompatible G1 joint names; missing={sorted(missing)}, extra={sorted(extra)}")
+            order = [names.index(name) for name in G1_JOINT_NAMES]
+            p = torch.tensor(clip["root_pos"], dtype=torch.float32)
+            quat = torch.tensor(clip["root_quat"], dtype=torch.float32)
+            j = torch.tensor(clip["joint_pos"][:, order], dtype=torch.float32)
+            src_fps, T_src = float(clip["fps"]), len(p)
+            # Sample only on the control clock, without extrapolating past the
+            # source's final timestamp. Optional object fields stay in the NPZ;
+            # this task's policy/state/goal contract describes only the robot.
             dur = (T_src - 1) / src_fps
-            n = int(np.floor(dur / CONTROL_DT)) + 1
-            t = torch.arange(n, dtype=torch.float32) * CONTROL_DT * src_fps
+            n = int(np.floor(dur / CONTROL_DT + 1e-9)) + 1
+            if T_src < 2 or n < 2:
+                raise ValueError(f"{f}: training requires at least two frames at 50 Hz")
+            t = torch.arange(n, dtype=torch.float64) * CONTROL_DT * src_fps
             i0 = torch.clamp(t.floor().long(), max=T_src - 2)
-            a = (t - i0.float()).clamp(0, 1)
+            a = (t - i0).clamp(0, 1).float()
             p = p[i0] * (1 - a[:, None]) + p[i0 + 1] * a[:, None]
             j = j[i0] * (1 - a[:, None]) + j[i0 + 1] * a[:, None]
             quat = quat_slerp(quat[i0], quat[i0 + 1], a)
@@ -94,7 +108,7 @@ class MotionLib:
 
     @staticmethod
     def from_dir(path: str, kin: G1Kinematics, device: str) -> MotionLib:
-        files = sorted(glob.glob(os.path.join(path, "*.csv")))
+        files = sorted(glob.glob(os.path.join(path, "*.npz")))
         return MotionLib(files, kin, device)
 
     def future_frames(self, f: torch.Tensor, K: int) -> torch.Tensor:

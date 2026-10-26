@@ -6,21 +6,21 @@ from contextlib import contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-import numpy as np
 import torch
 
+from motion_data import save_motion
 from supermimic.motion import MotionLib
-from supermimic.assets.g1.g1_constants import default_joint_pos_list
+from supermimic.assets.g1.g1_constants import G1_JOINT_NAMES, default_joint_pos_list
 from supermimic.rotations import mat_to_quat, so3_exp
 
 
 @contextmanager
 def motion_directory(kin=None, motion_dir: str | None = None):
-    """Yield actual CSV files for the same loader used by the registered task.
+    """Yield standard NPZ files for the same loader used by the registered task.
 
     Synthetic motion is intentionally nonstationary and airborne to expose frame,
     quaternion and link-origin/COM velocity conversion errors. It is a plumbing
-    fixture, not a motion-tracking benchmark. CSVs use the production 30 Hz format.
+    fixture, not a motion-tracking benchmark. The clip retains a source rate of 30 Hz.
     """
     if motion_dir:
         yield str(motion_dir)
@@ -36,10 +36,11 @@ def motion_directory(kin=None, motion_dir: str | None = None):
     joint_phase = torch.arange(29, dtype=torch.float32) * 0.17
     q = torch.tensor(default_joint_pos_list()) + 0.025 * torch.sin(1.7 * t[:, None] + joint_phase)
     q = q.clamp(kin.q_lo.cpu() + 0.005, kin.q_hi.cpu() - 0.005)
-    # LAFAN1 CSVs store xyzw; the learned state and mjlab use wxyz.
-    data = torch.cat((p, quaternion[:, 1:], quaternion[:, :1], q), -1).numpy()
     with TemporaryDirectory(prefix="supermimic-smoke-") as temp:
-        np.savetxt(Path(temp) / "synthetic.csv", data, delimiter=",")
+        save_motion(Path(temp) / "synthetic.npz", dict(
+            fps=30., root_pos=p.numpy(), root_quat=quaternion.numpy(),
+            joint_pos=q.numpy(), joint_names=G1_JOINT_NAMES,
+        ))
         yield temp
 
 

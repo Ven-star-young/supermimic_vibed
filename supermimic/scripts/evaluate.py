@@ -28,7 +28,7 @@ def build_parser():
     parser.add_argument("--task", default=TASK_ID)
     parser.add_argument("--checkpoint-file", "--ckpt", dest="checkpoint_file")
     parser.add_argument("--run-dir", type=Path)
-    parser.add_argument("--motion-dir", type=Path, default=Path("data/lafan1_g1"))
+    parser.add_argument("--motion-dir", type=Path, default=Path("data/motions/lafan1"))
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--watch", action="store_true")
     parser.add_argument("--every", type=int, default=1, help="evaluate every Nth saved checkpoint")
@@ -100,9 +100,9 @@ def score_checkpoint(path: Path, args):
     cfg.commands["motion"].motion_dir = str(args.motion_dir)
     cfg.commands["motion"].history_length = policy_cfg["history_length"]
     cfg.commands["motion"].goal_frames = policy_cfg["goal_frames"]
-    cfg.scene.num_envs = len(list(args.motion_dir.glob("*.csv")))
+    cfg.scene.num_envs = len(list(args.motion_dir.glob("*.npz")))
     if not cfg.scene.num_envs:
-        raise ValueError(f"No motion CSV files found in {args.motion_dir}")
+        raise ValueError(f"No standard motion NPZ files found in {args.motion_dir}")
     native = ManagerBasedRlEnv(cfg, device=args.device)
     try:
         env = RslRlVecEnvWrapper(native)

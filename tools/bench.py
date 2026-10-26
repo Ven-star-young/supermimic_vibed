@@ -10,7 +10,7 @@ from supermimic.assets.g1.g1_constants import default_joint_pos_list
 torch.backends.cuda.matmul.allow_tf32 = True
 dev = "cuda:0"
 kin = G1Kinematics(dev)
-motion = MotionLib.from_dir(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "lafan1_g1"), kin, dev)
+motion = MotionLib.from_dir(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "motions", "lafan1"), kin, dev)
 mdp = MDP(kin, motion, torch.tensor(default_joint_pos_list(), device=dev))
 wm = WorldModel().to(dev)
 B = 2048
