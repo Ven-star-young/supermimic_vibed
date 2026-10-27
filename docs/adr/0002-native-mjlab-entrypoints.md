@@ -40,5 +40,8 @@ future object tasks, which must still provide an explicit dynamics/MDP contract.
 
 Resuming refills replay because checkpoints do not contain replay transitions.
 Policy-only loading avoids the training allocation cost during play/evaluation.
-Current training is single-GPU; multiple GPU requests must fail explicitly until a
-synchronized distributed optimizer is implemented.
+Multi-GPU training now uses the stock launcher's one-process-per-GPU lifecycle.
+The runner initializes NCCL and explicitly averages optimizer-owned gradients before
+clipping. This permits freezing WM/Critic during policy imagination and sharing the
+geometry encoder without duplicate DDP hooks. Global valid-sample normalization and
+rank-0 checkpoint/log ownership complete the synchronization contract. See CONTEXT.md.

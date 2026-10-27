@@ -23,6 +23,7 @@ from ..tasks.interaction.assets import select_motion_files
 from .entity_world_model import EntityGeometryBank
 from .runner import SuperMimicRunner
 from .vecenv import ReplayEnvAdapter
+from . import distributed
 
 
 def scene_cfg(root, scene, *, cache_dir, num_envs, max_objects=8, play=False, seed=0):
@@ -82,7 +83,8 @@ class ChairExperimentRunner(SuperMimicRunner):
         self.scenes = scenes(manifest, "train")
         self.iterations_per_chair, self.schedule_seed = iterations_per_chair, schedule_seed
         self.collection_envs, self.capacity = num_envs, max_objects
-        self.device = torch.device(device)
+        self.device = distributed.initialize(device)
+        device = str(self.device)
         self.active_visit = -1
         self.visited_shapes = set()
         self.visit_log = []
@@ -104,6 +106,8 @@ class ChairExperimentRunner(SuperMimicRunner):
                         test_shapes=[g["shape_key"] for g in manifest["test"]],
                         iterations_per_chair=iterations_per_chair, schedule_seed=schedule_seed,
                         num_envs=num_envs)
+        if distributed.world_size() > 1:
+            protocol.update(world_size=distributed.world_size(), scene_distribution="strided_shuffled_visits")
         global_task = ChairExperimentTask(**vars(task), experiment=protocol)
         global_task.name = "g1_entity_multi_chair"
         global_task.geometry_keys = tuple(bank.keys[1:])
@@ -126,14 +130,15 @@ class ChairExperimentRunner(SuperMimicRunner):
         self.active_visit = 0
 
     def scene_for_visit(self, visit):
-        epoch, index = divmod(visit, len(self.scenes))
+        ordinal = visit * distributed.world_size() + distributed.rank()
+        epoch, index = divmod(ordinal, len(self.scenes))
         return int(np.random.default_rng(self.schedule_seed + epoch).permutation(len(self.scenes))[index])
 
     def open_scene(self, index, visit):
         from mjlab.envs import ManagerBasedRlEnv
         from mjlab.rl import RslRlVecEnvWrapper
         cfg = deepcopy(self.scene_configs[index])
-        cfg.seed += visit
+        cfg.seed += visit * distributed.world_size() + distributed.rank()
         native = ManagerBasedRlEnv(cfg, device=str(self.device))
         try:
             command = native.command_manager.get_term("motion")
@@ -175,12 +180,17 @@ class ChairExperimentRunner(SuperMimicRunner):
         if not self.visit_log or self.visit_log[-1]["visit"] != visit:
             self.visit_log.append(dict(visit=visit, iteration=self.current_learning_iteration,
                                       shape=shape, geometry=self.scenes[index]["geometry_key"]))
-            print(f"[multi-chair] visit={visit} scene={index + 1}/{len(self.scenes)} "
+            print(f"[multi-chair rank={distributed.rank()}] visit={visit} scene={index + 1}/{len(self.scenes)} "
                   f"covered={len(self.visited_shapes)}/{len(self.manifest['train'])}", flush=True)
 
     def save(self, path, infos=None):
         details = dict(visited_train_shapes=sorted(self.visited_shapes), scene_visits=self.visit_log,
                        split_fingerprint=self.manifest["fingerprint"])
+        if distributed.active():
+            per_rank = distributed.gather_objects(details)
+            details = dict(visited_train_shapes=sorted({shape for info in per_rank for shape in info["visited_train_shapes"]}),
+                           scene_visits_by_rank=[info["scene_visits"] for info in per_rank],
+                           split_fingerprint=self.manifest["fingerprint"])
         super().save(path, infos={**(infos or {}), "chair_experiment": details})
 
     def load(self, path, load_cfg=None, strict=True, map_location=None):
@@ -190,7 +200,8 @@ class ChairExperimentRunner(SuperMimicRunner):
         if not visited <= {g["shape_key"] for g in self.manifest["train"]}:
             raise ValueError("Checkpoint contains geometry exposure outside this training split")
         self.visited_shapes = visited
-        self.visit_log = list(details.get("scene_visits", []))
+        visits = details.get("scene_visits_by_rank")
+        self.visit_log = list(visits[distributed.rank()] if visits else details.get("scene_visits", []))
         return infos
 
     def close(self):

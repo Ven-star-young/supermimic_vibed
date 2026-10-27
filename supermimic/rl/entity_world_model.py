@@ -14,6 +14,7 @@ from torch import nn
 
 from supermimic.mdp.state import G1Dynamics
 from .models import mlp, run_mlp
+from . import distributed
 
 
 class EntityGeometryBank:
@@ -133,9 +134,12 @@ class EntityRunningNorm(nn.Module):
         valid = valid & (self.count < self.max_count)
         x = torch.where(valid, x, torch.zeros_like(x))
         n = valid.sum(0).float()
+        if distributed.active():
+            n, mean, variance = distributed.global_moments(x, valid)
+        else:
+            mean = x.sum(0) / n.clamp_min(1)
+            variance = torch.where(valid, (x - mean).square(), torch.zeros_like(x)).sum(0) / n.clamp_min(1)
         total = (self.count + n).clamp_min(1)
-        mean = x.sum(0) / n.clamp_min(1)
-        variance = torch.where(valid, (x - mean).square(), torch.zeros_like(x)).sum(0) / n.clamp_min(1)
         delta = mean - self.mean
         updated_variance = (self.var * self.count + variance * n
                             + delta.square() * self.count * n / total) / total

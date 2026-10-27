@@ -200,6 +200,13 @@ uv run train Mjlab-SuperMimic-EntitySitting-Unitree-G1 \
 `Mjlab-SuperMimic-EntityTracking-Unitree-G1` 和 `data/motions/lafan1` 训练无目标物体
 的机器人 tracking，共享同一种实体世界模型。
 
+单场景多卡训练将上述参数改为 `--gpu-ids '[0,1]'`；每张卡独立运行环境和 Replay，
+Actor、WM、Critic 每次更新同步梯度，几何编码器依旧只随 WM 更新。归一化使用各卡
+有效样本的全局统计。环境数、WM batch、Actor batch 均为每卡数量，学习率不会自动放大。
+模型和优化器每卡各一份，多卡不合并显存。只由 rank 0 保存模型和日志，Replay 导出
+按 `.rank0000.pt` 等后缀区分。多椅子 80/20 实验使用独立的
+[多卡入口](chair-generalization.md#多卡训练)，在各卡分配不同训练场景。
+
 增加对象时保存以下内容为 `scene_objects.json`。`size` 是米制盒子**半尺寸**，
 `pos` 是body原点；`quat` 默认单位wxyz：
 

@@ -25,7 +25,7 @@ class SuperMimicRunnerCfg(RslRlBaseRunnerCfg):
     num_steps_per_env: tyro.conf.Suppress[int] = 0
 
     buffer_steps: int = 1000
-    """Replay capacity in vectorized simulator steps."""
+    """Per-rank Replay capacity in vectorized simulator steps."""
     utd: float = 0.4
     """Learner updates per vectorized simulator step."""
     horizon: int = 32
@@ -35,9 +35,9 @@ class SuperMimicRunnerCfg(RslRlBaseRunnerCfg):
     wm_batches: int = 10
     """World-model optimizer updates per learning iteration."""
     wm_batch: int = 2048
-    """Real replay windows in each world-model optimizer update."""
+    """Real replay windows per rank in each world-model optimizer update."""
     pi_batch: int = 4096
-    """Imagined trajectories per policy update."""
+    """Imagined trajectories per rank per policy update."""
     lr: float = 2e-4
     """Initial learning rate for all three optimizers."""
     gamma: float = 0.99

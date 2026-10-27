@@ -5,6 +5,8 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
+from . import distributed
+
 from supermimic.mdp import G1Dynamics
 
 
@@ -35,8 +37,16 @@ class RunningNorm(nn.Module):
         x = x.reshape(-1, x.shape[-1]).float()
         if self.count >= self.max_count:
             return
-        n = x.shape[0]
-        m, v = x.mean(0), x.var(0, unbiased=False)
+        if distributed.active():
+            count, m, v = distributed.global_moments(x)
+            n = count[0]
+        else:
+            n = x.shape[0]
+            if n == 0:
+                return
+            m, v = x.mean(0), x.var(0, unbiased=False)
+        if n == 0:
+            return
         tot = self.count + n
         delta = m - self.mean
         self.mean += delta * n / tot

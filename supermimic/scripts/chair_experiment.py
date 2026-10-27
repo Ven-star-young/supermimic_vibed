@@ -17,6 +17,7 @@ from motion_data.collision import DEFAULT_CACHE_DIR
 from supermimic.rl.chair_experiment import ChairExperimentRunner, preflight, scene_cfg
 from supermimic.rl.runner import SuperMimicRunner
 from supermimic.tasks.entities.rl_cfg import make_runner_cfg
+from supermimic.rl import distributed
 
 
 def policy_digest(policy):
@@ -160,6 +161,10 @@ def main():
     parser.add_argument("--output", type=Path, default=Path("results/analysis/zero_shot_chairs.json"))
     parser.add_argument("--allow-incomplete-training", action="store_true")
     args = parser.parse_args()
+    if distributed.world_size() > 1 and args.mode != "train":
+        parser.error("Use a single process for check/evaluate; torchrun is for distributed training")
+    if args.mode == "train":
+        args.device = str(distributed.initialize(args.device))
     manifest, root = load_split(args.split, args.data_root)
     if args.mode == "check":
         print(json.dumps(cache_report(manifest, args.cache_dir), indent=2))
@@ -183,26 +188,36 @@ def main():
     if iterations < 1:
         parser.error("iterations must be positive")
     run_dir = args.run_dir or Path("logs/multi_chair") / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    if run_dir.exists() and any(run_dir.iterdir()) and not args.resume:
+    if distributed.active():
+        if args.run_dir is not None:
+            distributed.assert_same(str(args.run_dir), "experiment output directory")
+        run_dir = Path(distributed.gather_objects(str(run_dir))[0])
+    occupied = run_dir.exists() and any(run_dir.iterdir()) and not args.resume
+    if distributed.active():
+        occupied = any(distributed.gather_objects(occupied))
+    if occupied:
         parser.error("run-dir is not empty; use another directory or --resume")
     runner = ChairExperimentRunner(manifest, root, args.cache_dir, agent, num_envs=args.num_envs,
         max_objects=args.max_objects, iterations_per_chair=args.iterations_per_chair,
         schedule_seed=args.seed, log_dir=run_dir, device=args.device)
     try:
-        run_dir.mkdir(parents=True, exist_ok=True)
-        snapshot = {**manifest, "data_root": os.path.relpath(root, run_dir.resolve())}
-        (run_dir / "split.json").write_text(json.dumps(snapshot, indent=2) + "\n")
-        (run_dir / "experiment.json").write_text(json.dumps(dict(
-            split_file=str(args.split.resolve()), data_root=str(root), cache_dir=str(args.cache_dir.resolve()),
-            seed=args.seed, iterations_per_chair=args.iterations_per_chair, num_envs=args.num_envs,
-            max_objects=args.max_objects, agent=agent), indent=2) + "\n")
+        if distributed.primary():
+            run_dir.mkdir(parents=True, exist_ok=True)
+            snapshot = {**manifest, "data_root": os.path.relpath(root, run_dir.resolve())}
+            (run_dir / "split.json").write_text(json.dumps(snapshot, indent=2) + "\n")
+            (run_dir / "experiment.json").write_text(json.dumps(dict(
+                split_file=str(args.split.resolve()), data_root=str(root), cache_dir=str(args.cache_dir.resolve()),
+                seed=args.seed, iterations_per_chair=args.iterations_per_chair, num_envs=args.num_envs,
+                max_objects=args.max_objects, world_size=distributed.world_size(), agent=agent), indent=2) + "\n")
         if args.resume:
             runner.load(args.resume)
-        print(f"[multi-chair] {len(manifest['train'])} training chairs, "
-              f"{len(runner.scenes) * args.iterations_per_chair} iterations per scene sweep; logs={run_dir}")
+        if distributed.primary():
+            print(f"[multi-chair] {len(manifest['train'])} training chairs; "
+                  f"{args.num_envs} envs/rank, {distributed.world_size()} ranks; logs={run_dir}")
         runner.learn(iterations)
     finally:
         runner.close()
+        distributed.shutdown()
 
 
 if __name__ == "__main__":

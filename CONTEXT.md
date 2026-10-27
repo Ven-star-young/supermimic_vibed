@@ -17,6 +17,7 @@ checkpoint save/load and policy inference; it has no command-line launcher.
 | `tasks/` | mjlab task registration, native manager configuration, task dimensions and checkpoint schema |
 | `mdp/` | Native commands/actions/events, shared tensor observation/reward/termination heads and state/dynamics |
 | `rl/` | Runner, replay adapter, models, storage, model fitting, imagined BPTT and critic updates |
+| `rl/distributed.py` | Process groups, global normalizer moments, initial broadcast and optimizer gradient averaging |
 | `tasks/interaction/` | Optional rigid-object references, task heads, collision assets and physical randomization |
 | `rl/shared_world_model.py` | Task-independent state/integration, geometry encoder and masked normalization |
 | `rl/shared_replay.py` | Portable real transitions, episode masks and geometry ID remapping |
@@ -262,7 +263,7 @@ geometry identities and membership form a relocatable manifest fingerprint.
 `scripts/chair_experiment.py` is an explicit multi-scene experiment entry point;
 ordinary native train/play tasks keep their single-scene behavior.
 
-`ChairExperimentRunner` keeps one native scene batch resident while preserving one
+`ChairExperimentRunner` keeps one native scene batch resident per rank while preserving one
 learner, all optimizer state, shared geometry encoder and bounded recent Replay.
 Its training-only reference library assigns stable global frame IDs and its geometry
 bank contains only training assets. Physical scene transitions retain local reference
@@ -279,6 +280,35 @@ does not update network weights or normalization buffers. Metrics aggregate by c
 as well as clip. Reference-conditioned zero-shot geometry evaluation is distinct from
 unseen-motion evaluation or a dedicated stable-sitting success test.
 See [chair-generalization.md](docs/chair-generalization.md) for commands and limitations.
+
+### Synchronous multi-GPU learning
+
+Native tasks use mjlab's `--gpu-ids '[0,1]'` launcher; multi-chair experiments use
+`python -m torch.distributed.run --standalone --nproc_per_node=2 -m
+supermimic.scripts.chair_experiment train ...`. One process owns each CUDA device,
+simulator batch and local Replay. NCCL synchronizes CUDA ranks; CPU Gloo is used for
+distributed unit/integration fixtures, not batched native physics.
+
+Model parameters and buffers broadcast from rank 0 before collection. Every WM,
+Actor and Critic optimizer update averages gradients before clipping. Unused local
+parameters contribute zero; globally unused parameters keep `grad=None`. Nonfinite
+gradients cause a collective skip (Actor) or failure (WM/Critic). Shared entity geometry
+parameters belong only to the WM optimizer, retaining the existing BPTT freeze contract.
+Running normalizers merge global sample counts, means and variances; missing objects
+and invalid edges never contribute. Empty ranks still participate in collectives.
+
+Environment counts, batches and Replay sizes are per rank; `sim_steps` is global.
+Schema, geometry-bank contents and update settings must match on all ranks. Metrics
+aggregate across ranks. Only rank 0 saves full/standalone-WM checkpoints and logs;
+optional local Replay exports use `.rank0000.pt` suffixes. Model/optimizer memory is
+replicated, so multiple GPUs do not combine their VRAM into one allocation.
+
+Multi-chair scheduling takes shuffled global ordinal `visit * world_size + rank`.
+References and geometry IDs stay identical across ranks while physical scenes vary.
+Saved exposure is the union of visited training chairs, with per-rank visit histories.
+Full multi-chair resume requires the same world size and scheduling protocol; evaluation
+loads the frozen Actor on one GPU. Checkpoints omit simulation RNG and Replay, so resume
+refills Replay and does not promise a bitwise replay of interrupted episodes.
 
 Full checkpoints require task metadata: baseline schema version 2, legacy interaction
 schema version 3, and entity schema version 5. Incompatible layouts and missing metadata are rejected before loading.

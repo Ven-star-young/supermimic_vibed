@@ -404,7 +404,32 @@ The first iterations include compilation; `--agent.no-compile True` is useful fo
 checks. Original-task default batches remain 4096 environments, 1000 replay steps per world,
 8-step model fitting, 32-step imagination, 10 model batches of 2048 windows,
 4096 imagined rollouts and 500 world-model-only iterations. `--agent.amp none`
-disables BF16; TF32 remains enabled for FP32 matmuls. Training is single-GPU.
+disables BF16; TF32 remains enabled for FP32 matmuls.
+
+Synchronous multi-GPU training uses the stock mjlab launcher:
+
+```bash
+uv run train Mjlab-SuperMimic-EntitySitting-Unitree-G1 \
+  --gpu-ids '[0,1]' --env.scene.num-envs 128 \
+  --agent.experiment-name entity_sitting_2gpu --log-root logs
+```
+
+Each GPU owns a simulator batch and Replay; all ranks average Actor, WM and Critic
+gradients before clipping. Shared geometry still updates only through the WM optimizer.
+Normalizer moments use global valid samples, excluding masked objects. Environment
+counts, `wm_batch`, `pi_batch` and Replay capacity are **per GPU**: two cards with
+128 environments each give 256 environments overall. Learning rate is not scaled
+automatically. Model and optimizer memory is replicated, not pooled across cards.
+Only rank 0 writes metrics and model checkpoints; `sim_steps` counts all ranks.
+Optional Replay exports are named `replays/model_N.rank0000.pt`, `.rank0001.pt`, etc.;
+list the desired archives in `agent.world_model_replays` when reusing them.
+For distributed training across different chair scenes, use the explicit `torchrun`
+command in [chair-generalization.md](docs/chair-generalization.md#多卡训练).
+Evaluation remains single-process and can load a distributed training checkpoint.
+
+Two-process CPU/Gloo tests cover synchronization, BPTT, checkpoints and resume;
+native simulation regressions run on one GPU. Multi-GPU NCCL throughput and native
+simulation on multiple physical GPUs have not yet been validated.
 
 Quantitative evaluation starts each clip at its first frame, disables randomization
 and observation/action noise, and scores until the first failure or clip completion.

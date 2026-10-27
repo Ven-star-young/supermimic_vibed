@@ -57,7 +57,7 @@ uv run python -m supermimic.scripts.chair_experiment train \
 
 这是多场景实验入口。原有 `uv run train ... EntitySitting` 入口继续用于单种椅子场景。
 实验入口复用相同的 native mjlab 环境、SuperMimic 更新逻辑、奖励和域随机化；多椅子
-调度器只负责管理物理场景和统一数据索引。本轮仍是单卡训练。
+调度器负责管理物理场景和统一数据索引；也支持下述同步多卡训练。
 
 - 一次只驻留一种椅子的原生物理环境批次，避免同时装载 151 套 MuJoCo 场景。
 - 每 50 次学习迭代切换场景；每轮确定性打乱训练场景顺序，每种场景访问一次。
@@ -100,6 +100,41 @@ uv run python -m supermimic.scripts.chair_experiment train \
 完整续训恢复三类网络和优化器；在线 Replay 重新填充。场景序列从保存的迭代位置继续，
 但不保证恢复仿真 RNG 和 episode 的逐位一致运行。
 
+## 多卡训练
+
+在具备完整训练碰撞缓存的机器上运行：
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1 uv run python -m torch.distributed.run \
+  --standalone --nproc_per_node=2 \
+  -m supermimic.scripts.chair_experiment train \
+  --split data/splits/sitting_80_20_seed0.json \
+  --num-envs 128 --max-objects 8 --iterations-per-chair 50 \
+  --iterations 50000 --seed 0 --run-dir logs/sitting_80_20_2gpu
+```
+
+四卡将 `CUDA_VISIBLE_DEVICES` 改为 `0,1,2,3`，`--nproc_per_node` 改为 `4`。
+`LOCAL_RANK` 自动选择各进程的 CUDA 设备；无需为每个进程手工指定 `--device`。
+原生单场景任务直接用 `uv run train ... --gpu-ids '[0,1]'`，不要再套 torchrun。
+
+- 每卡独立驻留一个物理场景批次和本地 Replay，保存相同的完整网络与优化器。
+  每次更新先平均各卡梯度再裁剪；WM、Actor、Critic 参数同步，几何编码器仍只归 WM 更新。
+- 各卡从同一打乱的训练场景序列按 `visit * world_size + rank` 取场景，统一每 50 次迭代
+  换场景。151 个场景在两卡下前 76 次访问（3800 次迭代）可全部覆盖；跨序列边界的一批
+  可能同时包含下一轮场景，不保证每次各卡都互不重复。测试椅子不进入训练。
+- `--num-envs`、`wm_batch`、`pi_batch`、`buffer_steps` 都是**每卡**配置。例如两卡各
+  128 个环境，总计 256 个环境；两卡 WM batch 各 128，每次更新合计 256 个窗口。
+  学习率保持配置值。多卡不合并显存，每张卡仍需放下完整模型和自己的 Replay。
+- 归一化使用所有卡的有效样本统计，排除被 mask 的物体；空物体批次也参与通信。
+  `sim_steps` 统计所有卡的累计采样步数，日志聚合各卡指标，迭代编号不乘卡数。
+- rank 0 保存模型、实验元数据和日志；checkpoint 的训练覆盖率是所有卡访问集合的并集。
+  如开启 Replay 导出，各卡写入 `replays/model_N.rank0000.pt`、`.rank0001.pt` 等独立文件。
+- 完整多椅子续训要求卡数、划分、容量、每卡环境数和轮换设置一致，在上述命令追加
+  `--resume logs/sitting_80_20_2gpu/model_50000.pt`，并设置需要**追加**的 `--iterations`。
+  各卡从自己的场景调度位置继续，重新填充本地 Replay。
+- zero-shot 评估仍使用下方单进程命令，可以在一张卡上读取多卡 checkpoint，全部权重和
+  归一化统计冻结。
+
 ## 未见椅子评估
 
 ```bash
@@ -128,8 +163,11 @@ uv run python -m supermimic.scripts.chair_experiment evaluate \
 
 新增测试覆盖椅子级划分、尺度变体不跨分区、文件变化拒绝、缺缓存不改变划分、均衡轮换、
 全局参考帧/几何 ID、场景边界、原生 GPU 跨场景学习和续训、冻结未见几何评估。
-全套软件回归 **176 项通过**。另在真实现有椅子上用完整默认网络完成两种训练几何的
+当前全套软件回归 **177 项通过**。另在真实现有椅子上用完整默认网络完成两种训练几何的
 两次迭代，随后在第三种未见几何上冻结评估；流程、参数不变性和报告生成通过，未进行长训练。
 该诊断策略的测试轨迹未完成，归一化回报约 0.143，不能当作泛化成功结果。产物保存在
 `logs/chair_generalization_smoke/`，与正式 151/38 划分分开。
+新增双进程 CPU/Gloo 测试覆盖真实网络的 BPTT 更新、全局归一化、梯度平均、参数一致性、
+检查点与每卡 Replay 保存、续训以及跨卡训练椅子覆盖汇总。其转移数据是解析测试夹具，
+不代表双 GPU 原生仿真验证。本机仅一张 GPU；双 GPU NCCL 运行和吞吐收益仍需在多卡机器测量。
 完整 151 把训练椅子、38 把测试椅子的效果仍需补齐碰撞资产后实际测量。

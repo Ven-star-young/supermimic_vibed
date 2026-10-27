@@ -16,6 +16,7 @@ from torch import nn
 
 from .entity_world_model import EntityGeometryBank, EntityGeometryEncoder
 from .models import RunningNorm, mlp, run_mlp
+from . import distributed
 
 
 def _masked_values(values, valid):
@@ -25,7 +26,7 @@ def _masked_values(values, valid):
 def _update_valid(norm, values, valid):
     """Pool statistics over valid entities and all batch/time dimensions."""
     selected = values.reshape(-1, values.shape[-1])[valid.reshape(-1)]
-    if selected.numel():
+    if selected.numel() or distributed.active():
         norm.update(selected)
 
 

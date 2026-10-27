@@ -13,6 +13,7 @@ from torch import nn
 from supermimic.mdp.state import G1Dynamics
 from supermimic.rotations import mat_to_6d, mat_to_quat, quat_to_mat, so3_exp, so3_log, yaw_mat
 from .models import mlp, run_mlp
+from . import distributed
 
 
 def _rotate(rotation, vector):
@@ -222,9 +223,12 @@ class MaskedRunningNorm(nn.Module):
         mask = torch.ones_like(x) if mask is None else mask
         mask = mask * (self.count < self.max_count)
         n = mask.sum(0)
+        if distributed.active():
+            n, mean, var = distributed.global_moments(x, mask)
+        else:
+            mean = (x * mask).sum(0) / n.clamp_min(1)
+            var = ((x - mean).square() * mask).sum(0) / n.clamp_min(1)
         total = (self.count + n).clamp_min(1)
-        mean = (x * mask).sum(0) / n.clamp_min(1)
-        var = ((x - mean).square() * mask).sum(0) / n.clamp_min(1)
         delta = mean - self.mean
         new_var = (self.var * self.count + var * n + delta.square() * self.count * n / total) / total
         self.mean.add_(delta * n / total)
