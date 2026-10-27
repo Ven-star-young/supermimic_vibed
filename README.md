@@ -361,6 +361,35 @@ uv run python -m supermimic.scripts.chair_experiment evaluate \
 脚本会覆盖 JSON 中旧机器的绝对数据路径，无需改写原始选择记录。
 若只有导出目录，也可以向准备工具传 `--references <导出目录>/manifest.json`。
 
+### 本地策略部署：统一 reference 与初始化入口
+
+`tools/deploy_policy.py` 在真实MuJoCo物理中执行冻结Actor。默认使用本地下载的
+`logs/cuhk_reference_deployment/model_2000.pt` 及旁边的 `split.json`，一个环境、50 Hz。
+同一文件处理训练reference、扰动初始化、测试reference和以后人工挑选的NPZ/清单。
+
+```bash
+# 查看训练reference编号；选中的一段会单独建物理场景，不混入同椅子的其它动作。
+uv run python tools/deploy_policy.py --list
+
+# 参考第一帧的准确位姿和速度；重复播放，关闭窗口结束。
+uv run python tools/deploy_policy.py --index 0 --init clean --episodes 0
+
+# 同一reference，仅给机器人初始状态加扰动，运行5个回合。
+uv run python tools/deploy_policy.py --index 0 --init perturbed --noise-scale 1 --episodes 5
+
+# 以后选定的reference，不需要修改脚本。
+uv run python tools/deploy_policy.py --reference /path/to/selected.npz --init clean
+
+# 无窗口验证并保存每回合初态、长度、回报和结束原因。
+uv run python tools/deploy_policy.py --viewer none --init perturbed --episodes 10 \
+  --output results/analysis/deployment_perturbed.json
+```
+
+浏览器预览用 `--viewer viser --port 8087`，访问 `http://127.0.0.1:8087`；
+`--partition test` 切换到测试清单，`--references ...json --selection ...json` 接收人工选择记录。
+替换模型用 `--checkpoint /path/to/model_N.pt --split /path/to/its/split.json`。
+初始化语义、扰动范围和批量验证见 [policy-deployment.md](docs/policy-deployment.md)。
+
 统一格式：米、弧度、Z 向上、世界坐标，所有四元数为 **wxyz**。
 
 | 字段 | 形状 | 含义 |
