@@ -80,8 +80,28 @@ def test_native_entity_learning_checkpoint_and_replay_transfer(cuda_device, tmp_
         assert runner.pi.dec[0].in_features == 2242
         assert runner.critic.net[0].in_features == 1042
         assert not torch.equal(initial, runner.pi.dec[-1].weight)
+        # Zero-initialized WM output heads block encoder gradients on the first
+        # fitting step. Task updates must not independently change the encoder.
+        for before, after in zip(geometry_before, runner.pi.geometry_encoder.parameters()):
+            torch.testing.assert_close(before, after, atol=0, rtol=0)
+        assert runner.pi.geometry_encoder is runner.wm.geometry_encoder is runner.critic.geometry_encoder
+        shared = {id(p) for p in runner.wm.geometry_encoder.parameters()}
+        optimizer_ids = lambda opt: {id(p) for group in opt.param_groups for p in group['params']}
+        assert shared <= optimizer_ids(runner.opt_wm)
+        assert not shared & optimizer_ids(runner.opt_pi)
+        assert not shared & optimizer_ids(runner.opt_v)
+        assert not optimizer_ids(runner.opt_wm) & optimizer_ids(runner.opt_pi)
+        assert not optimizer_ids(runner.opt_wm) & optimizer_ids(runner.opt_v)
+        # The two task updates must not move the shared encoder. A later WM
+        # update changes it once, immediately visible through all three paths.
+        frozen = [p.detach().clone() for p in runner.wm.geometry_encoder.parameters()]
+        runner.policy_update()
+        for before, after in zip(frozen, runner.wm.geometry_encoder.parameters()):
+            torch.testing.assert_close(before, after, atol=0, rtol=0)
+            assert after.grad is None
+        runner.wm_update()
         assert any(not torch.equal(before, after) for before, after in zip(
-            geometry_before, runner.pi.geometry_encoder.parameters()))
+            frozen, runner.wm.geometry_encoder.parameters()))
         # Three fresh real steps, two environments, two observed objects each.
         assert runner.pi.robot_norm.count == 6
         assert runner.pi.object_pose_norm.count == 12
@@ -131,6 +151,20 @@ def test_native_entity_learning_checkpoint_and_replay_transfer(cuda_device, tmp_
         with torch.no_grad():
             torch.testing.assert_close(inference.get_inference_policy()(observations), expected_action)
         assert inference.pi.geometry_bank.keys == runner.wm.geometry_bank.keys
+        inconsistent = torch.load(full, map_location='cpu', weights_only=False)
+        key = next(k for k in inconsistent['critic'] if k.startswith('geometry_encoder.'))
+        inconsistent['critic'][key] = inconsistent['critic'][key].clone() + .01
+        inconsistent_path = tmp_path / 'inconsistent_encoder.pt'
+        torch.save(inconsistent, inconsistent_path)
+        with pytest.raises(ValueError, match='inconsistent shared geometry'):
+            inference.load(inconsistent_path, load_cfg={'actor': True})
+        # Resume restores optimizer ownership and the shared module identity.
+        resumed = SuperMimicRunner(env, cfg, device=cuda_device)
+        resumed.load(full)
+        assert resumed.pi.geometry_encoder is resumed.wm.geometry_encoder is resumed.critic.geometry_encoder
+        with torch.no_grad():
+            torch.testing.assert_close(resumed.get_inference_policy()(observations), expected_action)
+        del resumed
         # A matching asset key must not silently replace the scene's actual
         # collision shape during inference restore.
         conflicting = torch.load(full, map_location="cpu", weights_only=False)

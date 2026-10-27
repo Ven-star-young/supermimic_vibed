@@ -107,9 +107,11 @@ Critic, references and reward. Only object pose tracking is added to the origina
 At capacity 8, replay stores state **175** and context **441**. Actor observations contain
 **197 raw values** per frame; its scene encoder produces a **221-value encoded frame**.
 Critic receives **792 current values + 730 robot references + 720 object references**,
-then encodes the scene before its 1042-input value MLP. Geometry encoders are separate
-for the Actor, Critic and world model; raw points/normals are shared, learned codes are
-recomputed. Default training uses 128 worlds, 256 replay steps and WM/Actor batches of 128.
+then encodes the scene before its 1042-input value MLP. Actor, Critic and world model
+share one geometry encoder, updated only by the world-model dynamics loss. Actor and
+Critic train their own downstream scene encoders; geometry codes are recomputed from
+the current shared weights. Default training uses 128 worlds, 256 replay steps and
+WM/Actor batches of 128.
 
 ```bash
 uv run train Mjlab-SuperMimic-EntitySitting-Unitree-G1 \

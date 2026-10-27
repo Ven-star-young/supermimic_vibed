@@ -225,7 +225,8 @@ class RelationAttention(nn.Module):
 class EntityWorldModel(nn.Module):
     """One set of weights handles masked sets of interacting rigid entities."""
 
-    def __init__(self, dynamics=None, geometry_bank=None, width=256, layers=4, heads=4):
+    def __init__(self, dynamics=None, geometry_bank=None, width=256, layers=4, heads=4,
+                 geometry_encoder=None):
         super().__init__()
         if dynamics is None:
             from .entity_state import EntityDynamics
@@ -234,7 +235,7 @@ class EntityWorldModel(nn.Module):
         self.max_objects = dynamics.max_objects
         self.width, self.layers, self.heads = width, layers, heads
         self.geometry_bank = geometry_bank if geometry_bank is not None else EntityGeometryBank()
-        self.geometry_encoder = EntityGeometryEncoder()
+        self.geometry_encoder = geometry_encoder if geometry_encoder is not None else EntityGeometryEncoder()
         self.robot_norm = EntityRunningNorm(133)
         # Geometry embeddings are learned; do not accumulate stale embedding statistics.
         self.object_norm = EntityRunningNorm(25)

@@ -115,7 +115,10 @@ Context 分成四块：
 法线。网格缩放只施加一次。PointNet `6→64→128` 后做 max pooling，拼入三个米制
 extents，再投影成 64 维。坐标不逐物体归一化到单位立方体，真实尺寸保留。
 `EntityGeometryBank` 的格式版本为 **2**，只缓存原始点、法线、extents 和设备副本。
-Actor、Critic、世界模型各自拥有独立可训练几何编码器；训练过程中重新计算 embedding。
+Actor、Critic、世界模型共享同一个几何编码器实例，只有 WM 动力学损失和优化器更新它。
+Actor/Critic 读取几何特征时停止向该编码器反传梯度，各自的物体/场景编码器继续学习；
+通过物体位姿、预测状态和动作的梯度路径保留。每次前向都按最新共享参数重算 embedding，
+不会缓存跨 WM 更新的旧特征。编码器随 WM 更新后，Actor/Critic 会在后续更新中适应其表示。
 
 连续输入按语义块归一化，只有有效物体和关系更新统计；ID 和 mask 不做数值特征。
 物体位置/速度增量在当前 G1 heading 中表达，旋转增量在物体 body frame 中表达：
@@ -245,7 +248,11 @@ uv run python -m supermimic.scripts.evaluate \
 
 保存完整任务 `model_N.pt` 和独立物理 `world_models/model_N.pt`；开启
 `--agent.export-world-model-replay True` 时另存 `replays/model_N.pt`，辅助目录不参与resume搜索。
-完整任务使用**schema4**，保存三类网络/优化器/归一化器、geometry bank、对象配置和几何身份。
+完整任务使用**schema5**，保存三类网络/优化器/归一化器、geometry bank、对象配置和几何身份。
+共享编码器只属于 WM 优化器，Actor/Critic 优化器排除这组参数。完整存档中的三条几何
+编码器参数路径必须数值一致；恢复后重新绑定到同一个模块。单独推理通过 Actor 保存的
+编码器参数即可运行。旧 schema4 完整任务存档不直接恢复，但其独立 entity WM 存档仍可
+加载，用来初始化共享编码器和动力学网络。
 几何key包含碰撞几何与尺度。恢复任务要求场景与schema匹配；推理不创建世界模型或Replay。
 
 独立世界模型只恢复物理权重和归一化器。共享权重支持跨 `max_objects` 容量加载，仍验证机器人、

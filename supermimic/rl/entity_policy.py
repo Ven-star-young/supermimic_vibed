@@ -2,8 +2,9 @@
 
 Only raw observations are retained in the actor history. Learned geometry and
 scene embeddings are recomputed on every forward, so they cannot become stale
-as the actor learns. Actor, critic and world model own independent encoders;
-only the immutable geometry assets are shared between them.
+as the world model learns. The runner shares one geometry encoder across actor,
+critic and world model; only the dynamics optimizer updates that encoder.
+Actor and critic own their downstream scene encoders.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ def _update_valid(norm, values, valid):
         norm.update(selected)
 
 
+@torch.no_grad()
 def _geometry(bank, encoder, ids, valid):
     """IDs select assets only; their numerical values never enter a network."""
     ids = torch.where(valid, ids, torch.zeros_like(ids)).long()
@@ -56,7 +58,8 @@ class EntityPolicy(nn.Module):
     robot_obs_dim, object_obs_dim = 93, 13
 
     def __init__(self, geometry_bank=None, max_objects=8, hist=10, goal_dim=730,
-                 z_dim=32, action_dim=29, hidden=(2048, 1024, 512, 256), scene_dim=128):
+                 z_dim=32, action_dim=29, hidden=(2048, 1024, 512, 256), scene_dim=128,
+                 geometry_encoder=None):
         super().__init__()
         if max_objects < 1 or hist < 1:
             raise ValueError("max_objects and history must be positive")
@@ -64,7 +67,7 @@ class EntityPolicy(nn.Module):
         self.max_objects, self.hist, self.goal_dim = max_objects, hist, goal_dim
         self.obs_dim = self.robot_obs_dim + max_objects * self.object_obs_dim
         self.frame_dim = self.robot_obs_dim + scene_dim
-        self.geometry_encoder = EntityGeometryEncoder()
+        self.geometry_encoder = geometry_encoder if geometry_encoder is not None else EntityGeometryEncoder()
         self.object_encoder = mlp(75, [128], scene_dim, act=nn.SiLU)
         self.scene_query = nn.Linear(self.robot_obs_dim, scene_dim)
         self.enc = mlp(goal_dim, list(hidden), z_dim)
@@ -145,7 +148,7 @@ class EntityCritic(nn.Module):
     robot_feature_dim, object_raw_dim = 184, 38
 
     def __init__(self, geometry_bank=None, max_objects=8, goal_frames=10, goal_dim=730,
-                 hidden=(256, 128), scene_dim=128):
+                 hidden=(256, 128), scene_dim=128, geometry_encoder=None):
         super().__init__()
         if max_objects < 1 or goal_frames < 1:
             raise ValueError("max_objects and goal_frames must be positive")
@@ -154,7 +157,7 @@ class EntityCritic(nn.Module):
         self.num_entities = max_objects + 2
         self.current_dim = 184 + 38 * max_objects + 3 * self.num_entities**2 + 4
         self.in_dim = self.current_dim + goal_dim + max_objects * goal_frames * 9
-        self.geometry_encoder = EntityGeometryEncoder()
+        self.geometry_encoder = geometry_encoder if geometry_encoder is not None else EntityGeometryEncoder()
         self.future_encoder = mlp(goal_frames * 9, [128, 64], 32, act=nn.SiLU)
         self.object_encoder = mlp(100 + 32, [128], scene_dim, act=nn.SiLU)
         self.robot_encoder = mlp(184, [128], scene_dim, act=nn.SiLU)

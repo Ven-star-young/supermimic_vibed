@@ -175,10 +175,12 @@ All objects share encoder/head weights. Robot133, object90 and ground4 inputs be
 Geometry bank format2 stores 1024 metric xyz/unit-normal points and extents, not learned codes.
 
 Raw Actor observations are `93+13N` (197 default), retaining per-object pose9 and
-valid/dynamic/target/geometry metadata. The Actor's own geometry/set encoder produces
+valid/dynamic/target/geometry metadata. Shared geometry and the Actor's own set encoder produce
 128 scene features, hence221 per frame,2210 per ten-frame history and2242 after the
-32-value robot goal latent. Actor, Critic and WM geometry encoders have independent
-weights, and history stores raw observations so codes are recomputed after updates.
+32-value robot goal latent. Actor, Critic and WM share the same geometry encoder module.
+Only the WM optimizer owns these parameters. Actor/Critic geometry lookup runs without
+autograd; their own scene encoders still learn and state/action gradients are preserved.
+History stores raw observations so geometry codes are recomputed after WM updates.
 
 Critic raw current features are `184+38N+3(N+2)^2+4` (792 default). It receives the
 730-value robot future goal and `N*K*9` object future poses (720 default). Per-object
@@ -195,7 +197,11 @@ Only the target-object pose reward is added. Dynamic mass/friction use5–15kg/.
 evaluation uses10kg/1.0 for the chair and configured values for extra objects.
 Object-object effective friction is the componentwise max; ground copies are isolated.
 
-Entity full checkpoints use schema4 and preserve geometry mappings and scene identity.
+Entity full checkpoints use schema5 and preserve geometry mappings and scene identity.
+Schema4 full checkpoints had independent encoders and incompatible task optimizer groups;
+they are rejected for full/inference task restore. Their standalone entity WM weights
+remain compatible and initialize the shared encoder. New full checkpoints require equal
+geometry-encoder weights in all three network paths; inference loads the actor's copy.
 Standalone entity WM weights support changing capacity; archived replay requires an
 exact schema including capacity. Old single-object model weights are not implicitly
 converted. New defaults are128 training worlds,256 replay steps and WM/Actor batches128.
@@ -248,7 +254,7 @@ Unmodeled extra scene entities remain rejected.
 ## Checkpoints and validation
 
 Full checkpoints require task metadata: baseline schema version 2, legacy interaction
-schema version 3, and entity schema version 4. Incompatible layouts and missing metadata are rejected before loading.
+schema version 3, and entity schema version 5. Incompatible layouts and missing metadata are rejected before loading.
 Earlier 99-observation policies cannot load into either current task; their observation
 semantics differ from Sitting's object-relative values. No implicit weight slicing or conversion is
 performed. See [ADR 0003](docs/adr/0003-paper-observation-contract.md).

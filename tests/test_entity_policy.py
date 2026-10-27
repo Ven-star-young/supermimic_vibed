@@ -118,8 +118,8 @@ def test_actor_reencodes_raw_history_and_backpropagates_through_scene():
     before.square().sum().backward()
     assert history.grad[..., 93:102].abs().sum() > 0
     encoder_grads = [p.grad for p in actor.geometry_encoder.parameters()]
-    assert all(g is not None and torch.isfinite(g).all() for g in encoder_grads)
-    assert sum(g.abs().sum() for g in encoder_grads) > 0
+    assert all(g is None for g in encoder_grads)  # WM alone trains shared geometry.
+    assert any(p.grad is not None and p.grad.abs().sum() > 0 for p in actor.object_encoder.parameters())
     with torch.no_grad():
         next(iter(actor.geometry_encoder.parameters())).add_(0.1)
     after = actor(history, goal)
@@ -191,16 +191,21 @@ def test_critic_masks_absent_slots_and_non_target_reference_tracks():
     assert value_model.friction_norm.count == 2 * (4 * 3)
 
 
-def test_critic_metadata_ids_and_encoder_weights_are_independent():
+def test_shared_geometry_parameters_and_metadata_lookup():
     torch.manual_seed(11)
     bank = geometry_bank()
     actor = EntityPolicy(bank, max_objects=3, hist=2, hidden=(16,))
-    value_model = EntityCritic(bank, max_objects=3, goal_frames=3, hidden=(16,))
+    value_model = EntityCritic(bank, max_objects=3, goal_frames=3, hidden=(16,),
+                              geometry_encoder=actor.geometry_encoder)
     assert actor.geometry_bank is value_model.geometry_bank
     actor_params = {id(p) for p in actor.geometry_encoder.parameters()}
-    assert not actor_params.intersection(id(p) for p in value_model.geometry_encoder.parameters())
+    assert actor.geometry_encoder is value_model.geometry_encoder
+    assert actor_params == {id(p) for p in value_model.geometry_encoder.parameters()}
     values = critic_data(value_model)
     expected = value_model(values)
+    expected.sum().backward()
+    assert all(p.grad is None for p in actor.geometry_encoder.parameters())
+    assert any(p.grad is not None and p.grad.abs().sum() > 0 for p in value_model.object_encoder.parameters())
     value_model.split_inputs(values)[1][..., 37] = 2
     torch.testing.assert_close(value_model(values), expected)
     assert value_model.net[0].in_features == 1042

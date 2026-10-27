@@ -28,7 +28,9 @@ class EntityTask(TrackingTask):
 
     def checkpoint_metadata(self):
         cmd = self.env_cfg.commands["motion"]
-        return dict(name=self.name, schema_version=4, dynamics_schema=self.dynamics.schema(),
+        return dict(name=self.name, schema_version=5,
+                    geometry_encoder="shared;updated_by_world_model_only",
+                    dynamics_schema=self.dynamics.schema(),
                     dimensions=asdict(self.dimensions), critic_object_goal_per_frame=9,
                     geometry_keys=list(self.geometry_keys), object_names=list(object_names(cmd)),
                     extra_objects=[asdict(obj) for obj in cmd.extra_objects],

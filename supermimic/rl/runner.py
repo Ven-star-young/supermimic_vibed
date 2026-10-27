@@ -85,7 +85,8 @@ class SuperMimicRunner:
         self.task.validate_model_coverage()
         if isinstance(self.dynamics, EntityDynamics):
             bank = self.env.unwrapped.command_manager.get_term("motion").geometry_bank
-            self.wm = EntityWorldModel(dynamics=self.dynamics, geometry_bank=bank).to(self.device)
+            self.wm = EntityWorldModel(dynamics=self.dynamics, geometry_bank=bank,
+                                       geometry_encoder=self.pi.geometry_encoder).to(self.device)
             if self.cfg.world_model_replays:
                 from .entity_replay import EntityReplay
                 self.shared_replay = EntityReplay(self.cfg.world_model_replays, bank, self.dynamics)
@@ -103,14 +104,18 @@ class SuperMimicRunner:
                            if hasattr(self.task, "critic_goal_dim") else self.goal_dim)
         if isinstance(self.dynamics, EntityDynamics):
             self.critic = EntityCritic(bank, max_objects=self.dynamics.max_objects,
-                                       goal_frames=self.goal_frames, goal_dim=self.goal_dim).to(self.device)
+                                       goal_frames=self.goal_frames, goal_dim=self.goal_dim,
+                                       geometry_encoder=self.pi.geometry_encoder).to(self.device)
             if self.critic.in_dim != self.dims.critic_features + critic_goal_dim:
                 raise ValueError("Entity critic features and future-reference layout disagree")
         else:
             self.critic = Critic(self.dims.critic_features + critic_goal_dim).to(self.device)
         self.opt_wm = torch.optim.Adam(self.wm.parameters(), lr=self.cfg.lr)
-        self.opt_pi = torch.optim.Adam(self.pi.parameters(), lr=self.cfg.lr, betas=(0.9, 0.95))
-        self.opt_v = torch.optim.Adam(self.critic.parameters(), lr=self.cfg.lr)
+        shared = ({id(p) for p in self.wm.geometry_encoder.parameters()}
+                  if isinstance(self.wm, EntityWorldModel) else set())
+        self.opt_pi = torch.optim.Adam((p for p in self.pi.parameters() if id(p) not in shared),
+                                       lr=self.cfg.lr, betas=(0.9, 0.95))
+        self.opt_v = torch.optim.Adam((p for p in self.critic.parameters() if id(p) not in shared), lr=self.cfg.lr)
         if self.cfg.world_model_file:
             self.load_world_model(self.cfg.world_model_file)
         self.error_floor = self.dynamics.error_floor(self.device)
@@ -215,6 +220,10 @@ class SuperMimicRunner:
         loss.backward()
         nn.utils.clip_grad_norm_(self.wm.parameters(), 1.0)
         self.opt_wm.step()
+        if isinstance(self.wm, EntityWorldModel):
+            # Shared leaves also occur in pi/critic.parameters(). Clear WM
+            # gradients before task gradient clipping/diagnostics see them.
+            self.opt_wm.zero_grad(set_to_none=True)
         mask = window["mask"][:, -1]
         return loss.detach() / self.cfg.wm_window, (last_error.detach() * mask).sum() / mask.sum().clamp(min=1)
 
@@ -419,6 +428,16 @@ class SuperMimicRunner:
         checkpoint = torch.load(path, map_location=location, weights_only=False)
         self.task.validate_checkpoint(checkpoint)
         if isinstance(self.dynamics, EntityDynamics):
+            # Full checkpoints expose encoder tensors through all three module
+            # paths. Require agreement before any load can overwrite shared leaves.
+            encoders = [{k: v for k, v in checkpoint[name].items() if k.startswith("geometry_encoder.")}
+                        for name in ("pi", "wm", "critic")]
+            if not encoders[0] or any(
+                set(encoder) != set(encoders[0]) or any(
+                    not torch.equal(value, encoders[0][key]) for key, value in encoder.items())
+                for encoder in encoders[1:]
+            ):
+                raise ValueError("Checkpoint has inconsistent shared geometry encoder weights")
             geometry = checkpoint.get("entity_geometry")
             if geometry is None:
                 raise ValueError("Entity checkpoint lacks geometry assets")
