@@ -61,6 +61,11 @@ class AuditedChairRunner(ChairExperimentRunner):
         if self.device.type == "cuda":
             record["peak_torch_allocated_bytes"] = torch.cuda.max_memory_allocated(self.device)
             record["peak_torch_reserved_bytes"] = torch.cuda.max_memory_reserved(self.device)
+            free, total = torch.cuda.mem_get_info(self.device)
+            # Includes Warp graphs and CUDA allocations invisible to PyTorch.
+            record["device_used_bytes_at_checkpoint"] = total - free
+        native = self.env.unwrapped
+        record["simulation_capacity"] = dict(nconmax=native.cfg.sim.nconmax, njmax=native.cfg.sim.njmax)
         if self.buffer is not None:
             rows = self.buffer._row(torch.arange(self.buffer.size, device=self.device))
             record["replay"] = tensor_digest((key, value[rows]) for key, value in self.buffer.data.items())

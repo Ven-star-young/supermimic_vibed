@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, replace
 from functools import partial
+import math
 import os
 
 import mujoco
@@ -22,8 +23,9 @@ def _size_contact_buffers(spec, *, sim_cfg, previous=None):
     """Size from the assembled scene before mjlab uploads its qpos0 to Warp.
 
     Detailed convex decompositions can exceed the per-object floor even before
-    reset. Keep two times the measured startup contacts/constraints, rounded up
-    to powers of two, and never shrink explicitly configured capacities.
+    reset. Keep 25% headroom in small aligned blocks; doubling then rounding to
+    powers of two could reserve almost four times the required CUDA workspace.
+    Explicit larger capacities remain lower bounds.
     """
     if previous is not None:
         previous(spec)
@@ -31,8 +33,8 @@ def _size_contact_buffers(spec, *, sim_cfg, previous=None):
     sim_cfg.mujoco.apply(model)
     data = mujoco.MjData(model)
     mujoco.mj_forward(model, data)
-    for field, count in (("nconmax", data.ncon), ("njmax", data.nefc)):
-        required = 1 << max(0, (2 * count - 1).bit_length())
+    for field, count, block in (("nconmax", data.ncon, 128), ("njmax", data.nefc, 512)):
+        required = math.ceil(math.ceil(1.25 * count) / block) * block
         old = getattr(sim_cfg, field) or 0
         if required > old:
             setattr(sim_cfg, field, required)

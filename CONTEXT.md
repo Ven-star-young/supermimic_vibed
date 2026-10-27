@@ -274,11 +274,14 @@ assets never silently remove a chair from the experiment.
 
 Entity scenes size contact/constraint buffers before the native Warp upload. A lazy
 scene callback compiles the assembled model on CPU, runs its initial forward pass,
-and grows the configured floors to twice the observed contacts/constraints rounded
-up to powers of two. This fixes complex chairs exceeding the old 512/2000 per-object
-floors at startup. Larger explicit capacities and existing scene callbacks are retained;
+and grows the configured floors with 25% headroom, aligned to 128 contacts and 512
+constraints. Doubling and rounding to powers of two previously inflated graph workspace
+enough to OOM at 512 worlds on an A100. Larger explicit capacities and existing scene callbacks are retained;
 CLI reconstruction and scene deepcopy rebind the callback to the current simulation
 config. This is an allocation estimate, not a guarantee for all future contact states.
+Replay checks Warp's persistent overflow flags after stepping and before episode reset,
+raising on truncated physics instead of recording the transition. This detects physics
+buffer overflow; it does not recover a CUDA out-of-memory failure or save a checkpoint.
 
 Full experiment checkpoints record the split, scheduling contract and visited training
 shapes. Held-out actor transfer is a separate, explicit evaluation API: it validates
