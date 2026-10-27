@@ -17,11 +17,11 @@ from motion_data import load_motion
 from motion_data.collision import add_object_geoms, collision_key, load_collision_parts
 
 
-def geometry_key(clip):
+def geometry_key(clip, profile="default"):
     scale = np.asarray(clip["object_scale"], dtype="<f8")
     if scale.shape != (3,) or not np.isfinite(scale).all() or np.any(scale <= 0):
         raise ValueError("Object scale must be a positive finite 3-vector")
-    return collision_key(clip) + ":" + hashlib.sha256(scale.tobytes()).hexdigest()
+    return collision_key(clip, profile=profile) + ":" + hashlib.sha256(scale.tobytes()).hexdigest()
 
 
 def _signature(path):
@@ -123,16 +123,17 @@ class ObjectAsset:
 
 
 @lru_cache(maxsize=8)
-def _load_asset(signature, cache_dir):
+def _load_asset(signature, cache_dir, profile="default"):
     clip = load_motion(signature[0])
-    parts = load_collision_parts(clip, cache_dir)
+    parts = load_collision_parts(clip, cache_dir, profile=profile)
     com, inertia = mass_properties(clip)
     points, extent = sample_geometry(parts, clip["object_scale"])
-    return ObjectAsset(clip, parts, geometry_key(clip), com, inertia, points, extent)
+    return ObjectAsset(clip, parts, geometry_key(clip, profile), com, inertia, points, extent)
 
 
 def selected_asset(cfg):
-    return _load_asset(_signature(select_motion_files(cfg)[0]), str(Path(cfg.collision_cache_dir).resolve()))
+    return _load_asset(_signature(select_motion_files(cfg)[0]), str(Path(cfg.collision_cache_dir).resolve()),
+                       getattr(cfg, "collision_profile", "default"))
 
 
 def make_chair_spec(cfg):

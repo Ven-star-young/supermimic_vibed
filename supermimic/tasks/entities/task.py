@@ -28,7 +28,7 @@ class EntityTask(TrackingTask):
 
     def checkpoint_metadata(self):
         cmd = self.env_cfg.commands["motion"]
-        return dict(name=self.name, schema_version=5,
+        metadata = dict(name=self.name, schema_version=5,
                     geometry_encoder="shared;updated_by_world_model_only",
                     dynamics_schema=self.dynamics.schema(),
                     dimensions=asdict(self.dimensions), critic_object_goal_per_frame=9,
@@ -36,6 +36,9 @@ class EntityTask(TrackingTask):
                     extra_objects=[asdict(obj) for obj in cmd.extra_objects],
                     object_reward=asdict(cmd.object_reward_cfg),
                     target_slots=self.motion.target_mask.cpu().tolist())
+        if cmd.collision_profile != "default":
+            metadata["collision_profile"] = cmd.collision_profile
+        return metadata
 
 
 def build_task(motion_dir=None, *, device="cuda:0", play=False, motion=None, kin=None, cfg=None, files=None):

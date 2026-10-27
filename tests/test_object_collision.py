@@ -39,6 +39,7 @@ def cache(tmp_path, tetra, monkeypatch):
 
 def test_cache_identity_uses_geometry_and_recipe_not_pose(tetra, monkeypatch):
     key = collision.collision_key(tetra)
+    assert key == "62f14c125027493313bf152b65b64ac94c5f7a5ef8fc20376b849844ef783ae1"
     other_motion = dict(tetra, object_scale=np.ones(3), object_pos=np.ones((5, 3)))
     assert collision.collision_key(other_motion) == key
     changed_mesh = dict(tetra, object_vertices=tetra["object_vertices"] * 2)
@@ -170,3 +171,73 @@ def test_cli_deduplicates_geometry_and_reports_invalid_source(cache, tetra, tmp_
     result = subprocess.run(command, capture_output=True, text=True, timeout=30)
     assert result.returncode == 1
     assert "FAILED broken.npz" in result.stderr
+
+
+def test_compact_profile_has_separate_verified_cache(cache, tetra, monkeypatch):
+    compact = collision.prepare_collision(tetra, cache.parent, profile="compact")
+    assert compact != cache
+    assert collision.collision_key(tetra) == collision.collision_key(tetra, profile="default")
+    assert len(collision.load_collision_parts(tetra, cache.parent, profile="compact")) == 1
+    with np.load(compact) as archive:
+        arrays = dict(archive)
+        assert archive["profile"].item() == "compact"
+    # Legacy default files did not store a profile label and remain readable.
+    with np.load(cache) as archive:
+        legacy = {key: value for key, value in archive.items() if key != "profile"}
+    np.savez(cache, **legacy)
+    assert len(collision.load_collision_parts(tetra, cache.parent)) == 1
+    # The compact contract requires exact metadata, with no default fallback.
+    arrays.pop("profile")
+    np.savez(compact, **arrays)
+    with pytest.raises(ValueError, match="Mismatched profile"):
+        collision.load_collision_parts(tetra, cache.parent, profile="compact")
+    with pytest.raises(ValueError, match="Unknown collision profile"):
+        collision.collision_key(tetra, profile="unknown")
+
+
+def test_default_cache_cannot_substitute_for_missing_compact(cache, tetra):
+    with pytest.raises(FileNotFoundError, match="--profile compact"):
+        collision.load_collision_parts(tetra, cache.parent, profile="compact")
+
+
+@pytest.mark.parametrize("excess", ["parts", "vertices"])
+def test_compact_preparation_rejects_recipe_bound_violations(cache, tetra, tmp_path, monkeypatch, excess):
+    if excess == "parts":
+        raw = [(tetra["object_vertices"], tetra["object_faces"])] * 33
+    else:
+        # ConvexHull normalizes faces but deliberately retains supplied vertices.
+        # Extra interior points must not bypass the compact storage bound.
+        vertices = np.vstack((tetra["object_vertices"], np.full((29, 3), .1)))
+        raw = [(vertices, tetra["object_faces"])]
+    monkeypatch.setattr(sys.modules["coacd"], "run_coacd", lambda *_, **__: raw)
+    output = tmp_path / "invalid_compact"
+    with pytest.raises(ValueError, match="allows at most 32"):
+        collision.prepare_collision(tetra, output, profile="compact")
+    assert not list(output.glob("*.npz"))
+
+
+def test_compact_loader_rejects_overbudget_asset(cache, tetra):
+    compact = collision.prepare_collision(tetra, cache.parent, profile="compact")
+    with np.load(compact) as archive:
+        arrays = dict(archive)
+    arrays.update(vertices=np.tile(arrays["vertices"], (33, 1)),
+                  faces=np.tile(arrays["faces"], (33, 1)),
+                  vertex_offsets=np.arange(34) * 4, face_offsets=np.arange(34) * 4)
+    np.savez(compact, **arrays)
+    with pytest.raises(ValueError, match="allows at most 32 parts"):
+        collision.load_collision_parts(tetra, cache.parent, profile="compact")
+
+
+def test_compact_cli_deduplicates_and_loads_selected_profile(cache, tetra, tmp_path):
+    compact = collision.prepare_collision(tetra, cache.parent, profile="compact")
+    motions = tmp_path / "compact_motions"
+    motions.mkdir()
+    np.savez(motions / "one.npz", **tetra)
+    np.savez(motions / "two.npz", **tetra)
+    result = subprocess.run([sys.executable, "tools/prepare_collisions.py", str(motions),
+                             "--cache-dir", str(cache.parent), "--workers", "1", "--profile", "compact"],
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert "profile=compact" in result.stdout
+    assert "Created 0, reused 1, failed 0" in result.stdout
+    assert compact.name in result.stdout

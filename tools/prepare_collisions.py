@@ -17,7 +17,7 @@ os.environ.setdefault("OMP_NUM_THREADS", "2")
 
 import numpy as np
 
-from motion_data.collision import DEFAULT_CACHE_DIR, collision_key, prepare_collision
+from motion_data.collision import COLLISION_PROFILES, DEFAULT_CACHE_DIR, collision_key, prepare_collision
 
 
 def _read_mesh(path):
@@ -27,11 +27,11 @@ def _read_mesh(path):
         return {key: archive[key] for key in ("object_vertices", "object_faces")}
 
 
-def _prepare_one(path, cache_dir):
+def _prepare_one(path, cache_dir, profile="default"):
     clip = _read_mesh(path)
-    target = Path(cache_dir) / f"{collision_key(clip)}.npz"
+    target = Path(cache_dir) / f"{collision_key(clip, profile)}.npz"
     cached = target.exists()
-    prepare_collision(clip, cache_dir)
+    prepare_collision(clip, cache_dir, profile)
     with np.load(target, allow_pickle=False) as data:
         count = len(data["vertex_offsets"]) - 1
     return target, cached, count
@@ -44,6 +44,8 @@ def main() -> int:
     parser.add_argument("--partition", choices=("train", "test", "all"), default="all")
     parser.add_argument("--data-root", type=Path, help="Relocated split data root")
     parser.add_argument("--cache-dir", type=Path, default=DEFAULT_CACHE_DIR)
+    parser.add_argument("--profile", choices=COLLISION_PROFILES, default="default",
+                        help="Collision approximation; compact bounds hulls and vertices to 32 each")
     parser.add_argument("--workers", type=int, default=2)
     parser.add_argument("--limit", type=int, help="Process at most this many unique object meshes")
     args = parser.parse_args()
@@ -70,7 +72,7 @@ def main() -> int:
             if clip is None:
                 skipped += 1
                 continue
-            key = collision_key(clip)
+            key = collision_key(clip, args.profile)
             unique.setdefault(key, path)
         except Exception as exc:
             failed += 1
@@ -79,7 +81,7 @@ def main() -> int:
             break
         if index % 250 == 0:
             print(f"Scanned {index}/{len(files)} clips; {len(unique)} unique meshes", flush=True)
-    print(f"Preparing {len(unique)} unique meshes with {args.workers} workers, "
+    print(f"Preparing {len(unique)} unique meshes with {args.workers} workers, profile={args.profile}, "
           f"OMP_NUM_THREADS={os.environ['OMP_NUM_THREADS']}; skipped {skipped} robot-only clips",
           flush=True)
     completed = reused = 0
@@ -87,7 +89,7 @@ def main() -> int:
     # NumPy/CoACD utility in workers, without the training stack.
     with ProcessPoolExecutor(max_workers=args.workers,
                              mp_context=multiprocessing.get_context("spawn")) as pool:
-        pending = {pool.submit(_prepare_one, path, args.cache_dir): path for path in unique.values()}
+        pending = {pool.submit(_prepare_one, path, args.cache_dir, args.profile): path for path in unique.values()}
         for index, future in enumerate(as_completed(pending), 1):
             path = pending[future]
             try:

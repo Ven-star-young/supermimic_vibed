@@ -121,6 +121,7 @@ def score_checkpoint(path: Path, args):
         if not isinstance(schema, dict) or schema.get("kind") != "g1-entity-physics":
             raise ValueError("Entity evaluation requires an entity task checkpoint")
         command = replace(cfg.commands["motion"], max_objects=schema["max_objects"],
+                          collision_profile=metadata.get("collision_profile", "default"),
                           extra_objects=tuple(ObjectCfg(**obj) for obj in metadata.get("extra_objects", [])),
                           extra_objects_file=None)
         cfg = replace(cfg, commands={**cfg.commands, "motion": command})

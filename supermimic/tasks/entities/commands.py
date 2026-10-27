@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 
 import torch
 
-from motion_data.collision import DEFAULT_CACHE_DIR
+from motion_data.collision import DEFAULT_CACHE_DIR, COLLISION_PROFILES
 from ...mdp.commands import MotionCommand, MotionCommandCfg
 from ...rotations import mat_to_quat
 from ...rl.entity_world_model import EntityGeometryBank
@@ -20,12 +20,15 @@ class EntityCommandCfg(MotionCommandCfg):
     object_motion_file: str | None = None
     motion_files: tuple[str, ...] = ()
     collision_cache_dir: str = str(DEFAULT_CACHE_DIR)
+    collision_profile: str = "default"
     extra_objects: tuple[ObjectCfg, ...] = ()
     extra_objects_file: str | None = None
     object_physical_cfg: ObjectPhysicsCfg = field(default_factory=ObjectPhysicsCfg)
     object_reward_cfg: ObjectRewardCfg = field(default_factory=ObjectRewardCfg)
 
     def __post_init__(self):
+        if self.collision_profile not in COLLISION_PROFILES:
+            raise ValueError(f"Unknown collision profile: {self.collision_profile}")
         if not 1 <= self.max_objects <= 32:
             raise ValueError("max_objects must be in [1,32]")
         object_names(self)

@@ -34,6 +34,14 @@ class ReferenceResetCfg:
     joint_position: float = 0.1
 
 
+def default_model_value(sim, field, env_ids, item):
+    """Select immutable model defaults from uniform or per-world variant scenes."""
+    values = sim.get_default_field(field)
+    if field in getattr(sim, "per_world_default_fields", ()):
+        return values[env_ids, item]
+    return values[item]
+
+
 @requires_model_fields("geom_friction", "body_ipos", recompute=RecomputeLevel.set_const)
 def randomize_physics(env, env_ids=None, command_name: str = "motion"):
     cmd = env.command_manager.get_term(command_name)
@@ -52,7 +60,7 @@ def randomize_physics(env, env_ids=None, command_name: str = "motion"):
                              device=env.device).nonzero().flatten()
     env.sim.model.geom_friction[ids[:, None], planes[None], 0] = cfg.evaluation_friction if cmd.cfg.play else cfg.friction[0]
     torso = int(robot.indexing.body_ids[robot.body_names.index(cfg.torso_body)])
-    env.sim.model.body_ipos[ids, torso] = env.sim.get_default_field("body_ipos")[torso] + cmd.xi[ids, cfg.com_start:cfg.com_start + 3]
+    env.sim.model.body_ipos[ids, torso] = default_model_value(env.sim, "body_ipos", ids, torso) + cmd.xi[ids, cfg.com_start:cfg.com_start + 3]
 
 
 def randomize_joint_offsets(env, env_ids, command_name: str = "motion"):

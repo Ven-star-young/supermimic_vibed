@@ -5,6 +5,7 @@ import torch
 from mjlab.managers.event_manager import RecomputeLevel, requires_model_fields
 
 from ...rotations import quat_to_mat
+from ...mdp.events import default_model_value
 from ..interaction.events import ObjectPhysicsCfg
 
 
@@ -38,16 +39,18 @@ def randomize_entity_physics(env, env_ids=None, command_name="motion"):
         fixed_mu = cfg.evaluation_robot_friction if target else extra.friction
         mass = sample(cfg.mass) if randomized else torch.full((len(ids),), fixed_mass, device=env.device)
         friction = sample(cfg.robot_friction) if randomized else torch.full_like(mass, fixed_mu)
-        principal = sim.get_default_field("body_inertia")[body] * (
-            mass / sim.get_default_field("body_mass")[body])[:, None]
+        principal = default_model_value(sim, "body_inertia", ids, body) * (
+            mass / default_model_value(sim, "body_mass", ids, body))[:, None]
         sim.model.body_mass[ids, body] = mass
         sim.model.body_inertia[ids, body] = principal
         geom_ids = entity.indexing.geom_ids
         main = geom_ids[torch.as_tensor(sim.mj_model.geom_contype[geom_ids.cpu().numpy()] == 2,
                                         device=env.device)]
-        floor_copy = geom_ids[torch.as_tensor([
-            sim.mj_model.geom(int(geom)).name.endswith("_ground") for geom in geom_ids
-        ], device=env.device)]
+        # Variant meshes receive slot names, so identify roles by their actual
+        # contact masks instead of the source geom's name suffix.
+        floor_copy = geom_ids[torch.as_tensor(
+            (sim.mj_model.geom_contype[geom_ids.cpu().numpy()] == 0)
+            & (sim.mj_model.geom_conaffinity[geom_ids.cpu().numpy()] == 1), device=env.device)]
         sim.model.geom_friction[ids[:, None], main[None], 0] = friction[:, None]
         # Main copy has priority 1, robot has priority 0: all friction components
         # are taken from the object. Object-object copies have equal priorities.
@@ -56,10 +59,10 @@ def randomize_entity_physics(env, env_ids=None, command_name="motion"):
         pairs[ids, 0, index + 1] = pairs[ids, index + 1, 0] = main_friction
         floor_friction = torch.maximum(sim.model.geom_friction[ids, floor_copy[0]], ground_friction)
         pairs[ids, index + 1, ground_index] = pairs[ids, ground_index, index + 1] = floor_friction
-        rotation = quat_to_mat(torch.as_tensor(sim.mj_model.body_iquat[body], device=env.device, dtype=torch.float32))
-        inertia = rotation @ torch.diag_embed(principal) @ rotation.T
+        rotation = quat_to_mat(default_model_value(sim, "body_iquat", ids, body))
+        inertia = rotation @ torch.diag_embed(principal) @ rotation.transpose(-1, -2)
         obj_context[ids, index, 0] = mass
-        obj_context[ids, index, 1:4] = sim.get_default_field("body_ipos")[body]
+        obj_context[ids, index, 1:4] = default_model_value(sim, "body_ipos", ids, body)
         obj_context[ids, index, 4:10] = inertia[:, [0, 1, 2, 0, 0, 1], [0, 1, 2, 1, 2, 2]]
     for i in range(len(contacts)):
         for j in range(i + 1, len(contacts)):

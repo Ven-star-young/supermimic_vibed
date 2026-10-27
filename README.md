@@ -154,6 +154,17 @@ The local split has already been generated. Collision preparation is incomplete
 fails explicitly on missing assets instead of changing the split. No full-scale
 training result is claimed. See [experiment protocol and configuration](docs/chair-generalization.md).
 
+For simultaneous geometry diversity within each GPU batch, add `--scene-mode mixed`.
+Each environment keeps a fixed chair, with balanced counts across all training scenes
+(83 selected chairs and 512 environments give 6–7 environments/chair/rank). References,
+geometry IDs and per-world physical properties follow that assignment; episodes are
+not interrupted by the 50-iteration scene rotation. Optional `--collision-profile compact`
+uses separate offline caches with at most 32 convex parts/32 vertices each. This is an
+explicit contact approximation, not a fidelity-preserving memory tweak. See
+[mixed-chair commands and validation](docs/mixed-chair-training.md) and
+[collision approximation limits](docs/compact-collisions.md). Start a new experiment
+when changing scene mode or collision profile; full resume checks their identity.
+
 ### Legacy single-object shared world model and sitting
 
 `Sitting` adds a free-moving chair, its relative pose in the actor observation,

@@ -15,40 +15,55 @@ import torch
 
 from motion_data import load_motion
 from motion_data.chair_split import cache_report, scenes, verify_files
-from motion_data.collision import load_collision_parts
+from motion_data.collision import collision_key, load_collision_parts
 from ..tasks.entities.assets import entity_asset
 from ..tasks.entities.env_cfgs import make_env_cfg
 from ..tasks.entities.task import EntityTask, build_task
-from ..tasks.interaction.assets import select_motion_files
+from ..tasks.interaction.assets import geometry_key, select_motion_files
 from .entity_world_model import EntityGeometryBank
 from .runner import SuperMimicRunner
 from .vecenv import ReplayEnvAdapter
 from . import distributed
 
 
-def scene_cfg(root, scene, *, cache_dir, num_envs, max_objects=8, play=False, seed=0):
+def scene_cfg(root, scene, *, cache_dir, num_envs, max_objects=8, play=False, seed=0,
+              collision_profile="default"):
     cfg = make_env_cfg(play=play, object_enabled=True, max_objects=max_objects)
     # Experiment definitions never inherit unrelated shell-provided extra objects.
     command = replace(cfg.commands["motion"], motion_dir=str(root),
                       motion_files=tuple(str(root / c["path"]) for c in scene["clips"]),
                       object_motion_file=str(root / scene["clips"][0]["path"]),
-                      extra_objects=(), extra_objects_file=None, collision_cache_dir=str(cache_dir))
+                      extra_objects=(), extra_objects_file=None, collision_cache_dir=str(cache_dir),
+                      collision_profile=collision_profile)
     cfg = replace(cfg, commands={"motion": command})
     cfg.scene.num_envs, cfg.auto_reset, cfg.seed = num_envs, False, seed
     return cfg
 
 
-def preflight(manifest, root, cache_dir, partition):
+def profile_cache_report(manifest, root, cache_dir, collision_profile="default"):
+    if collision_profile == "default":
+        return cache_report(manifest, cache_dir)
+    result = {}
+    for partition in ("train", "test"):
+        entries = scenes(manifest, partition)
+        missing = [scene["clips"][0]["path"] for scene in entries if not (Path(cache_dir) /
+            (collision_key(load_motion(root / scene["clips"][0]["path"]), collision_profile) + ".npz")).is_file()]
+        result[partition] = dict(chairs=len(manifest[partition]), scenes=len(entries),
+            clips=sum(len(g["clips"]) for g in manifest[partition]), missing_collision_scenes=len(missing), missing=missing)
+    return result
+
+
+def preflight(manifest, root, cache_dir, partition, collision_profile="default"):
     verify_files(manifest, root, partition)
     report = cache_report(manifest, cache_dir)[partition]
-    if report["missing"]:
+    if collision_profile == "default" and report["missing"]:
         raise FileNotFoundError(
             f"{partition}: {report['missing_collision_scenes']} collision assets missing; "
             "run tools/prepare_collisions.py --split-manifest <split.json> "
             f"--partition {partition} --cache-dir {cache_dir}. First missing: {report['missing'][0]}"
         )
     for scene in scenes(manifest, partition):
-        load_collision_parts(load_motion(root / scene["clips"][0]["path"]), cache_dir)
+        load_collision_parts(load_motion(root / scene["clips"][0]["path"]), cache_dir, profile=collision_profile)
 
 
 @dataclass
@@ -74,7 +89,8 @@ class GlobalFrameReplay(ReplayEnvAdapter):
 
 class ChairExperimentRunner(SuperMimicRunner):
     def __init__(self, manifest, root, cache_dir, train_cfg, *, num_envs=128, max_objects=8,
-                 iterations_per_chair=50, schedule_seed=0, log_dir=None, device="cuda:0"):
+                 iterations_per_chair=50, schedule_seed=0, log_dir=None, device="cuda:0",
+                 collision_profile="default"):
         if iterations_per_chair < 1 or num_envs < 1:
             raise ValueError("iterations_per_chair and num_envs must be positive")
         if train_cfg.get("world_model_file") or train_cfg.get("world_model_replays"):
@@ -88,14 +104,14 @@ class ChairExperimentRunner(SuperMimicRunner):
         self.active_visit = -1
         self.visited_shapes = set()
         self.visit_log = []
-        preflight(manifest, self.data_root, self.cache_dir, "train")
+        preflight(manifest, self.data_root, self.cache_dir, "train", collision_profile)
         bank = EntityGeometryBank()
         self.scene_configs = []
         for scene in self.scenes:
             cfg = scene_cfg(self.data_root, scene, cache_dir=cache_dir, num_envs=num_envs,
-                            max_objects=max_objects, seed=train_cfg.get("seed", 0))
+                            max_objects=max_objects, seed=train_cfg.get("seed", 0), collision_profile=collision_profile)
             asset = entity_asset(cfg.commands["motion"], 0)
-            if asset.key != scene["geometry_key"]:
+            if geometry_key(asset.source.clip) != scene["geometry_key"]:
                 raise ValueError("Training asset identity differs from split")
             bank.add(asset.key, asset.points, asset.extent)
             self.scene_configs.append(cfg)
@@ -108,6 +124,8 @@ class ChairExperimentRunner(SuperMimicRunner):
                         num_envs=num_envs)
         if distributed.world_size() > 1:
             protocol.update(world_size=distributed.world_size(), scene_distribution="strided_shuffled_visits")
+        if collision_profile != "default":
+            protocol["collision_profile"] = collision_profile
         global_task = ChairExperimentTask(**vars(task), experiment=protocol)
         global_task.name = "g1_entity_multi_chair"
         global_task.geometry_keys = tuple(bank.keys[1:])

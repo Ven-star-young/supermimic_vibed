@@ -296,6 +296,36 @@ as well as clip. Reference-conditioned zero-shot geometry evaluation is distinct
 unseen-motion evaluation or a dedicated stable-sitting success test.
 See [chair-generalization.md](docs/chair-generalization.md) for commands and limitations.
 
+### Simultaneous mixed-chair scenes
+
+`--scene-mode mixed` selects `MixedChairExperimentRunner` and native mjlab mesh
+variants. Each rank allocates every training scene to a fixed set of environments,
+with counts differing by at most one. All references use global frame IDs. The
+mixed command samples RSI only from each world's assigned chair; adaptive history
+is normalized and updated per chair. Episode reset never changes geometry, and
+there is no periodic scene rebuild or forced replay boundary.
+
+Variant physics defaults (mass, COM, principal inertia and inertial quaternion)
+have a world axis, including robot defaults. Randomization reads the appropriate
+world's defaults and records them in context. Ground-only collision copies live
+on a massless welded child so variable mesh counts cannot mix robot/ground slot
+roles. Synthesized padding slots are normalized before native variant compilation;
+absent meshes use backend dataid=-1 and never contact.
+
+Optional collision profiles retain the original default recipe and add compact
+32-hull/32-vertex approximations in separate recipe-addressed caches. Geometry-bank
+identity and point samples describe the actual chosen collision profile; the split
+still identifies original source shapes. Profile, mode, assignment seed, world size,
+environment count and split belong to the full-resume contract. Evaluation selects
+the checkpoint's profile and verifies effective train-geometry provenance. Reference
+NPZs, visual meshes, original inertias, task rewards and learning networks are unchanged.
+Compact hulls can close openings or alter support surfaces; see docs/compact-collisions.md.
+
+Mixed checkpoints record exposure to all assigned train scenes, reject rotating
+checkpoint resume, and support frozen single-scene held-out evaluation. Failed resume
+validation happens before rewriting existing experiment metadata. CLI/API details
+and CUHK memory measurements are in docs/mixed-chair-training.md.
+
 ### Synchronous multi-GPU learning
 
 Native tasks use mjlab's `--gpu-ids '[0,1]'` launcher; multi-chair experiments use

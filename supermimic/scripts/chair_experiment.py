@@ -13,8 +13,11 @@ from pathlib import Path
 import torch
 
 from motion_data.chair_split import cache_report, file_digest, load_split, scenes
-from motion_data.collision import DEFAULT_CACHE_DIR
-from supermimic.rl.chair_experiment import ChairExperimentRunner, preflight, scene_cfg
+from motion_data import load_motion
+from motion_data.collision import DEFAULT_CACHE_DIR, COLLISION_PROFILES
+from supermimic.rl.chair_experiment import ChairExperimentRunner, preflight, profile_cache_report, scene_cfg
+from supermimic.rl.mixed_chair_experiment import MixedChairExperimentRunner
+from supermimic.tasks.interaction.assets import geometry_key
 from supermimic.rl.runner import SuperMimicRunner
 from supermimic.tasks.entities.rl_cfg import make_runner_cfg
 from supermimic.rl import distributed
@@ -28,7 +31,7 @@ def policy_digest(policy):
     return digest.hexdigest()
 
 
-def load_heldout_actor(runner, checkpoint, manifest):
+def load_heldout_actor(runner, checkpoint, manifest, root=None):
     """Explicit transfer of frozen policy semantics, not full-scene resume.
 
     New geometry is encoded by the trained encoder using the evaluation bank's
@@ -44,6 +47,12 @@ def load_heldout_actor(runner, checkpoint, manifest):
         if metadata.get(key) != current.get(key):
             raise ValueError(f"Incompatible held-out policy contract: {key}")
     train_keys = {s["geometry_key"] for s in scenes(manifest, "train")}
+    profile = protocol.get("collision_profile", "default")
+    if profile != "default":
+        if root is None:
+            raise ValueError("Compact collision provenance requires the training motion root")
+        train_keys = {geometry_key(load_motion(root / s["clips"][0]["path"]), profile)
+                      for s in scenes(manifest, "train")}
     if set(checkpoint["entity_geometry"]["keys"][1:]) != train_keys:
         raise ValueError("Checkpoint geometry bank is not confined to the declared training partition")
     for key, value in checkpoint["pi"].items():
@@ -76,14 +85,15 @@ def evaluate_split(manifest, root, checkpoint_file, *, cache_dir, device="cuda:0
     if exposure != training_shapes and not allow_incomplete_training:
         raise ValueError(f"Checkpoint visited only {len(exposure)}/{len(training_shapes)} training chairs; "
                          "use --allow-incomplete-training only for an explicitly labeled diagnostic")
-    preflight(manifest, root, cache_dir, "test")
+    collision_profile = protocol.get("collision_profile", "default")
+    preflight(manifest, root, cache_dir, "test", collision_profile)
     capacity = checkpoint["task"]["dynamics_schema"]["max_objects"]
     records = []
     # Evaluation parameters are fixed, not sampled, and no training runner or
     # model optimizer is initialized. Each chair starts at every clip's first frame.
     for scene in scenes(manifest, "test"):
         cfg = scene_cfg(root, scene, cache_dir=cache_dir, num_envs=len(scene["clips"]),
-                        max_objects=capacity, play=True, seed=seed)
+                        max_objects=capacity, play=True, seed=seed, collision_profile=collision_profile)
         command_cfg = cfg.commands["motion"]
         command_cfg.history_length = checkpoint["policy_config"]["history_length"]
         command_cfg.goal_frames = checkpoint["policy_config"]["goal_frames"]
@@ -96,7 +106,7 @@ def evaluate_split(manifest, root, checkpoint_file, *, cache_dir, device="cuda:0
             train_cfg = checkpoint["train_cfg"] | {"amp": "none", "world_model_file": None,
                                                     "world_model_replays": (), "no_compile": True}
             runner = SuperMimicRunner(env, train_cfg, device=device)
-            load_heldout_actor(runner, checkpoint, manifest)
+            load_heldout_actor(runner, checkpoint, manifest, root)
             before = policy_digest(runner.pi)
             result = evaluate(env, runner)
             if before != policy_digest(runner.pi):
@@ -124,7 +134,7 @@ def evaluate_split(manifest, root, checkpoint_file, *, cache_dir, device="cuda:0
                               clip_completion_rate=1 - failed / clips))
     report = dict(protocol="held_out_geometry_frozen_policy", split_fingerprint=manifest["fingerprint"],
                   checkpoint=str(Path(checkpoint_file).resolve()), checkpoint_sha256=file_digest(checkpoint_file),
-                  evaluation_seed=seed, evaluated_chairs=len(per_chair),
+                  evaluation_seed=seed, evaluated_chairs=len(per_chair), collision_profile=collision_profile,
                   visited_training_chairs=len(exposure), total_training_chairs=len(training_shapes),
                   incomplete_training=exposure != training_shapes,
                   unseen_geometry=True, reference_conditioned=True,
@@ -148,6 +158,10 @@ def main():
     parser.add_argument("--split", type=Path, default=Path("data/splits/sitting_80_20_seed0.json"))
     parser.add_argument("--data-root", type=Path, help="Override relocatable motion root")
     parser.add_argument("--cache-dir", type=Path, default=DEFAULT_CACHE_DIR)
+    parser.add_argument("--scene-mode", choices=("rotate", "mixed"), default="rotate",
+                        help="mixed fixes one chair per world, balanced across all training chairs")
+    parser.add_argument("--collision-profile", choices=COLLISION_PROFILES, default="default",
+                        help="Training/check collision approximation; evaluation uses checkpoint profile")
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--num-envs", type=int, default=128)
@@ -167,7 +181,7 @@ def main():
         args.device = str(distributed.initialize(args.device))
     manifest, root = load_split(args.split, args.data_root)
     if args.mode == "check":
-        print(json.dumps(cache_report(manifest, args.cache_dir), indent=2))
+        print(json.dumps(profile_cache_report(manifest, root, args.cache_dir, args.collision_profile), indent=2))
         return
     if args.mode == "evaluate":
         if args.checkpoint_file is None:
@@ -197,10 +211,15 @@ def main():
         occupied = any(distributed.gather_objects(occupied))
     if occupied:
         parser.error("run-dir is not empty; use another directory or --resume")
-    runner = ChairExperimentRunner(manifest, root, args.cache_dir, agent, num_envs=args.num_envs,
-        max_objects=args.max_objects, iterations_per_chair=args.iterations_per_chair,
-        schedule_seed=args.seed, log_dir=run_dir, device=args.device)
+    runner_cls = MixedChairExperimentRunner if args.scene_mode == "mixed" else ChairExperimentRunner
+    options = {} if args.scene_mode == "mixed" else {"iterations_per_chair": args.iterations_per_chair}
+    runner = runner_cls(manifest, root, args.cache_dir, agent, num_envs=args.num_envs,
+        max_objects=args.max_objects, collision_profile=args.collision_profile,
+        schedule_seed=args.seed, log_dir=run_dir, device=args.device, **options)
     try:
+        if args.resume:
+            # Validate mode/profile/split before touching an existing run's metadata.
+            runner.load(args.resume)
         if distributed.primary():
             run_dir.mkdir(parents=True, exist_ok=True)
             snapshot = {**manifest, "data_root": os.path.relpath(root, run_dir.resolve())}
@@ -208,9 +227,8 @@ def main():
             (run_dir / "experiment.json").write_text(json.dumps(dict(
                 split_file=str(args.split.resolve()), data_root=str(root), cache_dir=str(args.cache_dir.resolve()),
                 seed=args.seed, iterations_per_chair=args.iterations_per_chair, num_envs=args.num_envs,
+                scene_mode=args.scene_mode, collision_profile=args.collision_profile,
                 max_objects=args.max_objects, world_size=distributed.world_size(), agent=agent), indent=2) + "\n")
-        if args.resume:
-            runner.load(args.resume)
         if distributed.primary():
             print(f"[multi-chair] {len(manifest['train'])} training chairs; "
                   f"{args.num_envs} envs/rank, {distributed.world_size()} ranks; logs={run_dir}")

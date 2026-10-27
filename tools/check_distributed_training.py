@@ -18,6 +18,7 @@ import torch
 
 from supermimic.rl import distributed
 from supermimic.rl.chair_experiment import ChairExperimentRunner
+from supermimic.rl.mixed_chair_experiment import MixedChairExperimentRunner
 
 
 def tensor_digest(values):
@@ -40,7 +41,7 @@ def optimizer_digest(optimizer):
                 initialized_parameters=len(state["state"]))
 
 
-class AuditedChairRunner(ChairExperimentRunner):
+class _AuditCheckpoints:
     def save(self, path, infos=None):
         signatures = dict(
             models={name: tensor_digest(module.state_dict().items()) for name, module in
@@ -66,9 +67,22 @@ class AuditedChairRunner(ChairExperimentRunner):
             record["device_used_bytes_at_checkpoint"] = total - free
         native = self.env.unwrapped
         record["simulation_capacity"] = dict(nconmax=native.cfg.sim.nconmax, njmax=native.cfg.sim.njmax)
+        command = native.command_manager.get_term("motion")
+        if hasattr(command, "env_scene"):
+            record["chair_environment_counts"] = command.env_scene.bincount().cpu().tolist()
         if self.buffer is not None:
             rows = self.buffer._row(torch.arange(self.buffer.size, device=self.device))
             record["replay"] = tensor_digest((key, value[rows]) for key, value in self.buffer.data.items())
+            if hasattr(command, "env_scene"):
+                frames = self.buffer.data["f"][rows]
+                expected = command.env_scene.expand_as(frames)
+                if not torch.equal(command.clip_scene[self.motion.clip_id[frames]], expected):
+                    raise AssertionError("Replay reference does not belong to its environment's chair")
+                geometry = self.dynamics.object_context(self.buffer.data["xi"][rows])[..., 0, 12].long()
+                ids = torch.tensor(command.scene_geometry_ids, device=self.device)
+                if not torch.equal(geometry, ids[expected]):
+                    raise AssertionError("Replay geometry differs from its environment's physical chair")
+                record["reference_geometry_alignment"] = True
         records = distributed.gather_objects(record)
         super().save(path, infos)
         if distributed.primary():
@@ -77,9 +91,18 @@ class AuditedChairRunner(ChairExperimentRunner):
             print(f"[distributed-audit] {path}: all {len(records)} ranks finite and synchronized", flush=True)
 
 
+class AuditedChairRunner(_AuditCheckpoints, ChairExperimentRunner):
+    pass
+
+
+class AuditedMixedChairRunner(_AuditCheckpoints, MixedChairExperimentRunner):
+    pass
+
+
 def main():
     from supermimic.scripts import chair_experiment
     chair_experiment.ChairExperimentRunner = AuditedChairRunner
+    chair_experiment.MixedChairExperimentRunner = AuditedMixedChairRunner
     chair_experiment.main()
 
 

@@ -141,7 +141,8 @@ def make_deployment_cfg(checkpoint, reference, args):
         raise ValueError("This deployment entry supports one reference chair, without additional scene objects")
     scene = {"clips": [{"path": reference.name}]}
     cfg = scene_cfg(reference.parent, scene, cache_dir=args.cache_dir, num_envs=1,
-                    max_objects=task["dynamics_schema"]["max_objects"], play=True, seed=args.seed)
+                    max_objects=task["dynamics_schema"]["max_objects"], play=True, seed=args.seed,
+                    collision_profile=task.get("chair_experiment", {}).get("collision_profile", "default"))
     original = cfg.commands["motion"]
     command = DeploymentCommandCfg(**{f.name: getattr(original, f.name) for f in fields(original)},
         init_mode=args.init_mode, noise_scale=args.noise_scale,
@@ -228,7 +229,8 @@ def run_reference(checkpoint, manifest, reference, args):
         runner = SuperMimicRunner(env, train_cfg, device=args.device)
         # Explicit frozen-policy transfer, including a new chair's local geometry
         # bank. Full training resume would incorrectly require identical scene IDs.
-        load_heldout_actor(runner, checkpoint, manifest)
+        _, training_root = load_split(args.split or args.checkpoint.parent / "split.json", args.data_root)
+        load_heldout_actor(runner, checkpoint, manifest, training_root)
         before = policy_digest(runner.pi)
         policy = runner.get_inference_policy()
         if args.viewer == "none":

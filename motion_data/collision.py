@@ -24,6 +24,23 @@ COACD_PARAMS = dict(
     merge=True, decimate=True, max_ch_vertex=64, extrude=False,
     extrude_margin=0.01, apx_mode="ch", seed=0,
 )
+COLLISION_PROFILES = ("default", "compact")
+
+
+def collision_parameters(profile="default"):
+    """Return the pinned recipe for a named collision approximation.
+
+    ``default`` retains the original cache identity. ``compact`` trades fine
+    collision detail for at most 32 convex hulls and 32 vertices per hull.
+    Bounds are checked on preprocessing output and every subsequent load;
+    neither profile drops parts or silently uses another approximation.
+    """
+    if profile not in COLLISION_PROFILES:
+        raise ValueError(f"Unknown collision profile {profile!r}; choose {COLLISION_PROFILES}")
+    params = dict(COACD_PARAMS)
+    if profile == "compact":
+        params.update(threshold=.03, max_convex_hull=32, max_ch_vertex=32)
+    return params
 
 
 def _mesh_arrays(vertices, faces, *, name="object"):
@@ -45,11 +62,11 @@ def _object_mesh(clip):
     return _mesh_arrays(clip["object_vertices"], clip["object_faces"])
 
 
-def _parameters():
-    return json.dumps(COACD_PARAMS, sort_keys=True, separators=(",", ":"))
+def _parameters(profile="default"):
+    return json.dumps(collision_parameters(profile), sort_keys=True, separators=(",", ":"))
 
 
-def collision_key(clip) -> str:
+def collision_key(clip, profile="default") -> str:
     """Hash unscaled mesh content and the complete pinned decomposition recipe.
 
     Trajectory, object pose and scale intentionally do not affect the key.
@@ -57,7 +74,7 @@ def collision_key(clip) -> str:
     vertices, faces = _object_mesh(clip)
     digest = hashlib.sha256()
     digest.update(f"motion-collision:{CACHE_VERSION}:coacd:{COACD_VERSION}:".encode())
-    digest.update(_parameters().encode())
+    digest.update(_parameters(profile).encode())
     for array in (vertices, faces):
         digest.update(np.asarray(array.shape, dtype="<i8").tobytes())
         digest.update(array.tobytes())
@@ -119,15 +136,31 @@ def _convex_parts(parts):
     return normalized
 
 
-def load_collision_parts(clip, cache_dir=DEFAULT_CACHE_DIR):
+def _validate_profile(parts, profile):
+    params = collision_parameters(profile)
+    # Version-1 default caches predate bounded-profile checks. Preserve their
+    # loader behavior, while making compact limits a strict asset contract.
+    if profile != "default":
+        if len(parts) > params["max_convex_hull"]:
+            raise ValueError(f"Collision profile {profile!r} allows at most "
+                             f"{params['max_convex_hull']} parts; received {len(parts)}")
+        for index, (vertices, _) in enumerate(parts):
+            if len(vertices) > params["max_ch_vertex"]:
+                raise ValueError(f"Collision profile {profile!r} allows at most "
+                                 f"{params['max_ch_vertex']} vertices per part; "
+                                 f"part {index} contains {len(vertices)}")
+    return parts
+
+
+def load_collision_parts(clip, cache_dir=DEFAULT_CACHE_DIR, profile="default"):
     """Load verified convex parts, failing explicitly if preprocessing is absent."""
-    key = collision_key(clip)
+    key = collision_key(clip, profile)
     path = Path(cache_dir) / f"{key}.npz"
     if not path.is_file():
         raise FileNotFoundError(
             f"Missing collision asset: {path}. Run uv run --extra motion python "
             "tools/prepare_collisions.py <motion.npz-or-directory> "
-            f"--cache-dir {Path(cache_dir)}"
+            f"--cache-dir {Path(cache_dir)} --profile {profile}"
         )
     try:
         with np.load(path, allow_pickle=False) as archive:
@@ -137,9 +170,13 @@ def load_collision_parts(clip, cache_dir=DEFAULT_CACHE_DIR):
         if not expected <= arrays.keys() or any(a.dtype.hasobject for a in arrays.values()):
             raise ValueError("Missing fields or unsupported object arrays")
         for field, value in (("key", key), ("format_version", CACHE_VERSION),
-                             ("coacd_version", COACD_VERSION), ("parameters", _parameters())):
+                             ("coacd_version", COACD_VERSION), ("parameters", _parameters(profile))):
             if arrays[field].shape != () or arrays[field].item() != value:
                 raise ValueError(f"Mismatched {field}")
+        if profile != "default" or "profile" in arrays:
+            if ("profile" not in arrays or arrays["profile"].shape != ()
+                    or arrays["profile"].item() != profile):
+                raise ValueError("Mismatched profile")
         vertices, faces = arrays["vertices"], arrays["faces"]
         vo, fo = arrays["vertex_offsets"], arrays["face_offsets"]
         for offsets, total in ((vo, len(vertices)), (fo, len(faces))):
@@ -149,21 +186,22 @@ def load_collision_parts(clip, cache_dir=DEFAULT_CACHE_DIR):
                 raise ValueError("Invalid part offsets")
         if len(vo) != len(fo):
             raise ValueError("Vertex and face part counts differ")
-        return _validate_parts([(vertices[vo[i]:vo[i + 1]], faces[fo[i]:fo[i + 1]])
-                                for i in range(len(vo) - 1)])
+        parts = [(vertices[vo[i]:vo[i + 1]], faces[fo[i]:fo[i + 1]])
+                 for i in range(len(vo) - 1)]
+        return _validate_parts(_validate_profile(parts, profile))
     except (ValueError, KeyError, IndexError, TypeError, OSError) as exc:
         raise ValueError(f"Invalid collision asset {path}: {exc}") from exc
 
 
-def prepare_collision(clip, cache_dir=DEFAULT_CACHE_DIR) -> Path:
+def prepare_collision(clip, cache_dir=DEFAULT_CACHE_DIR, profile="default") -> Path:
     """Create/reuse a validated asset atomically; return its cache path.
 
     An invalid existing cache is reported instead of silently replaced.
     Set OMP_NUM_THREADS before importing CoACD to control preprocessing threads.
     """
-    path = Path(cache_dir) / f"{collision_key(clip)}.npz"
+    path = Path(cache_dir) / f"{collision_key(clip, profile)}.npz"
     if path.exists():
-        load_collision_parts(clip, cache_dir)
+        load_collision_parts(clip, cache_dir, profile)
         return path
     from importlib.metadata import PackageNotFoundError, version
 
@@ -178,14 +216,17 @@ def prepare_collision(clip, cache_dir=DEFAULT_CACHE_DIR) -> Path:
 
     coacd.set_log_level("warn")
     vertices, faces = _object_mesh(clip)
-    parts = _validate_parts(_convex_parts(coacd.run_coacd(coacd.Mesh(vertices, faces), **COACD_PARAMS)))
+    params = collision_parameters(profile)
+    parts = _validate_parts(_validate_profile(
+        _convex_parts(coacd.run_coacd(coacd.Mesh(vertices, faces), **params)), profile))
     arrays = dict(
         vertices=np.concatenate([v for v, _ in parts]),
         faces=np.concatenate([f for _, f in parts]),
         vertex_offsets=np.cumsum([0] + [len(v) for v, _ in parts], dtype=np.int64),
         face_offsets=np.cumsum([0] + [len(f) for _, f in parts], dtype=np.int64),
         key=np.asarray(path.stem), format_version=np.asarray(CACHE_VERSION),
-        coacd_version=np.asarray(COACD_VERSION), parameters=np.asarray(_parameters()),
+        coacd_version=np.asarray(COACD_VERSION), parameters=np.asarray(_parameters(profile)),
+        profile=np.asarray(profile),
         hull_normalization=np.asarray("scipy.spatial.ConvexHull"),
         scipy_version=np.asarray(version("scipy")),
     )
