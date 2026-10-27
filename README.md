@@ -276,6 +276,91 @@ GRAIL 的 1748 段动作均为 125 帧、25 Hz，转换保留原帧率。椅子�
 `--object-usd-dir /path/to/object_usd`。转换后椅子三角网格保存在 NPZ 内，回放不再依赖
 外置盘、USD 或 pickle；椅子使用统一材质，不复制纹理。重新转换用 `--overwrite`。
 
+### Sitting 背部接触筛选
+
+浏览器筛选器可旋转查看机器人与椅子，慢放、逐帧查看、跳到背部最贴近椅子的帧，
+并将动作标记为保留、排除或待定。只使用 CPU 正运动学，不需要训练权重或 GPU。
+
+```bash
+uv run python tools/select_motions.py
+# 浏览器打开 http://127.0.0.1:8086
+# 自定义数据、记录文件和端口：
+uv run python tools/select_motions.py data/motions/sitting \
+  --selection data/selections/sitting_back.json --port 8086
+```
+
+先点击“扫描全部并排序”，再按“背部贴近占比优先”或“持续贴近优先”浏览。
+扫描在后台运行，期间可以播放和标记；可停止、继续，已分析结果会缓存。
+可按椅子文件名搜索、筛选标记状态、设置最少贴近占比；大于零时只显示已经分析的动作。
+“距离阈值”默认 3 cm，可根据视觉检查调整；“最贴近帧”暂停并定位候选接触瞬间。
+青色点仅覆盖 `torso_link` 的后侧表面，排除了臀部、手臂和手。
+距离来自背侧与椅子三角表面的确定性采样，可能高估间隙；它是筛选线索，
+不能判断穿透、接触力或是否真正形成背部支撑。应从侧面及斜后方确认。
+
+每次标记、备注和接触标注自动原子保存到 `data/selections/sitting_back.json`，
+重启使用同一记录文件即可继续。浏览器标签页共享同一筛选会话。
+“标记后自动下一段”默认开启，关闭后可以反复检查当前动作。
+“导出保留子集”会在 `data/motions/sitting_back_selected/selection-0001/`
+这样的新目录中生成保留的 NPZ、`manifest.json` 和 `kept.txt`。
+默认软链接节省空间，复制模式可生成独立副本；源动作不会移动或删除。
+再次导出使用新的编号目录，避免混入之前保留、后来排除的动作。
+导出目录可直接作为训练的 `motion-dir`；椅子分组和 train/test 划分仍应在选好子集后单独生成。
+其他数据集请同时指定独立的 `--selection`，记录文件会校验数据目录以避免混用标签。
+
+初筛完成后，用椅子分组回放器从每种椅子的已保留动作中确定一个 reference：
+
+```bash
+uv run python -m tools.review_chairs
+# 浏览器打开 http://127.0.0.1:8088
+```
+
+界面默认只显示尚未确定 reference 的多候选椅子，候选多的优先。
+同一椅子的已保留动作默认依次循环回放；关闭“同椅子的候选依次回放”可循环当前动作。
+暂停并手动切换候选时默认保持时间位置与相机视角，便于对比同一阶段。
+点击“选当前 motion 为这把椅子的 reference”后自动保存并转到下一待选椅子，
+也可关闭自动转到下一椅子、继续对比并替换选择。
+单候选椅子直接采用唯一候选；“椅子范围”可切换查看全部、已确定或单候选椅子。
+reference 单独保存到 `data/selections/sitting_back_references.json`，初筛的保留记录不变。
+初筛列表有更新时点击“重新读取最新保留列表”。全部椅子确定后可导出每椅一个 reference，
+生成 `data/motions/sitting_back_references/references-0001/` 等独立目录。
+导出会重新核对最新初筛记录，禁止尚未选择的多候选组或已排除的旧候选混入结果。
+
+### 使用最终 reference 训练
+
+`run_train_references.sh` 将最终 reference 接入已有的多椅子训练器。
+它读取 `sitting_back_references.json` 中的人工选择及初筛记录中的唯一候选，
+为每把椅子固定一段 reference，并沿用原始划分的训练／测试归属。
+当前最终选择为 **105 把椅子 / 105 段 reference：83 训练、22 测试**。
+生成的清单为 `data/splits/sitting_back_references_seed0.json`，
+运行时每个场景使用清单中的单个 `motion_files`，不会再加载同椅子的其他候选。
+
+```bash
+# 生成或复用固定清单，并检查碰撞缓存；不启动训练。
+./run_train_references.sh --check
+
+# 训练前补齐所选椅子的碰撞资产；已有缓存会复用。
+uv run --extra motion python tools/prepare_collisions.py \
+  --split-manifest data/splits/sitting_back_references_seed0.json --partition all --workers 4
+
+# 使用已有 Actor / WM / Critic、多椅子场景轮换及训练配置。
+./run_train_references.sh --num-envs 128 --iterations-per-chair 50 \
+  --iterations 50000 --device cuda:0
+
+# 用同一清单评估这次保留的 22 把测试椅子。
+uv run python -m supermimic.scripts.chair_experiment evaluate \
+  --split data/splits/sitting_back_references_seed0.json \
+  --checkpoint-file logs/sitting_back_references/model_50000.pt \
+  --output results/analysis/sitting_back_reference_zero_shot.json
+```
+
+启动脚本可透传原实验入口的 `--agent-json`、`--resume`、`--run-dir` 等参数。
+新清单包含 reference 文件哈希、选择记录来源和原划分 fingerprint；
+修改选择后应通过 `tools/prepare_reference_training.py --output <新清单>` 建立新实验，
+避免将不同 reference 当作相同实验恢复。`--resume` 应使用这份清单产生的 checkpoint。
+在其他机器上使用启动脚本时，保留两个选择 JSON、原始 split 和所选 NPZ 的相对目录布局；
+脚本会覆盖 JSON 中旧机器的绝对数据路径，无需改写原始选择记录。
+若只有导出目录，也可以向准备工具传 `--references <导出目录>/manifest.json`。
+
 统一格式：米、弧度、Z 向上、世界坐标，所有四元数为 **wxyz**。
 
 | 字段 | 形状 | 含义 |

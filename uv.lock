@@ -3107,8 +3107,12 @@ dependencies = [
     { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "pillow", version = "12.3.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "pillow", version = "13.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "torch" },
     { name = "trimesh" },
+    { name = "viser" },
 ]
 
 [package.optional-dependencies]
@@ -3136,10 +3140,12 @@ requires-dist = [
     { name = "mujoco", specifier = "~=3.11.0" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "pillow", specifier = ">=10" },
+    { name = "scipy", specifier = ">=1.14" },
     { name = "scipy", marker = "extra == 'motion'", specifier = ">=1.14" },
     { name = "torch", specifier = ">=2.7.0" },
     { name = "trimesh", specifier = ">=4" },
     { name = "usd-core", marker = "extra == 'motion'", specifier = ">=25.5" },
+    { name = "viser", specifier = ">=1.1,<2" },
 ]
 provides-extras = ["motion"]
 

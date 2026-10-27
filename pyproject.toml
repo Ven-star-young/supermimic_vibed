@@ -12,6 +12,8 @@ dependencies = [
     "matplotlib>=3.9",
     "pillow>=10",
     "trimesh>=4",
+    "scipy>=1.14",
+    "viser>=1.1,<2",
 ]
 
 [build-system]
