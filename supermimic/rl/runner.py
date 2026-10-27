@@ -194,7 +194,8 @@ class SuperMimicRunner:
     def collect(self, num_steps, stats):
         if num_steps == 0:
             return
-        self.prepare_collection()
+        with distributed.local_phase(self.device, "scene preparation"):
+            self.prepare_collection()
         env = self.replay_env
         for _ in range(num_steps):
             observations = self.env.get_observations()
@@ -207,7 +208,8 @@ class SuperMimicRunner:
                 self.pi.goal_norm.update(goal)
             action = self.pi(history, goal)
             action = (action + self.cfg.action_noise * torch.randn_like(action)).clamp(-20, 20)
-            out = env.step(action)
+            with distributed.local_phase(self.device, "physics step"):
+                out = env.step(action)
             self.buffer.add(out)
             initial, final = self.dynamics.unpack(out["s"]), self.dynamics.unpack(out["s1"])
             if isinstance(self.wm, (SharedWorldModel, EntityWorldModel)):

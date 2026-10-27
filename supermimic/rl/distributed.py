@@ -6,6 +6,7 @@ imagination without attaching DDP hooks to shared geometry parameters twice.
 from __future__ import annotations
 
 import atexit
+from contextlib import contextmanager
 from datetime import timedelta
 import hashlib
 import os
@@ -58,6 +59,30 @@ def gather_objects(value):
     result = [None] * world_size()
     dist.all_gather_object(result, value)
     return result
+
+
+@contextmanager
+def local_phase(device, description):
+    """Report rank-local failures before entering the next training collective.
+
+    The body must contain no distributed collectives. A Python exception on one
+    rank must not leave peers in normalizer reduction while it destroys NCCL.
+    This cannot recover a hung kernel or a destroyed CUDA context.
+    """
+    if not active():
+        yield
+        return
+    error = None
+    try:
+        yield
+    except Exception as exc:
+        error = exc
+    ok = torch.tensor(int(error is None), device=device, dtype=torch.int32)
+    dist.all_reduce(ok, op=dist.ReduceOp.MIN)
+    if not bool(ok):
+        messages = gather_objects(None if error is None else f"{type(error).__name__}: {error}")
+        details = "; ".join(f"rank {i}: {message}" for i, message in enumerate(messages) if message)
+        raise RuntimeError(f"Distributed {description} failed: {details}") from error
 
 
 def assert_same(value, description):

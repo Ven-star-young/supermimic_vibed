@@ -19,7 +19,7 @@ from .commands import EntityCommandCfg
 from .events import randomize_entity_physics
 
 
-def _size_contact_buffers(spec, *, sim_cfg, previous=None):
+def _size_contact_buffers(spec, *, sim_cfg, previous=None, epa_horizon_capacity=64):
     """Size from the assembled scene before mjlab uploads its qpos0 to Warp.
 
     Detailed convex decompositions can exceed the per-object floor even before
@@ -29,6 +29,12 @@ def _size_contact_buffers(spec, *, sim_cfg, previous=None):
     """
     if previous is not None:
         previous(spec)
+    # MuJoCo-Warp 3.11 allocates this edge scratch array in Python when capturing
+    # convex collision graphs. It is independent of contact count / njmax and
+    # has no public SimulationCfg option. Keep the version-specific adjustment
+    # here, before graph capture; never shrink a larger process-wide allocation.
+    from mujoco_warp._src import collision_convex
+    collision_convex.MJ_MAX_EPAHORIZON = max(collision_convex.MJ_MAX_EPAHORIZON, epa_horizon_capacity)
     model = spec.compile()
     sim_cfg.mujoco.apply(model)
     data = mujoco.MjData(model)
@@ -43,7 +49,12 @@ def _size_contact_buffers(spec, *, sim_cfg, previous=None):
 
 @dataclass(kw_only=True)
 class EntityEnvCfg(ManagerBasedRlEnvCfg):
+    epa_horizon_capacity: int = 64
+    """Minimum convex EPA boundary-edge capacity per collision pair (24 upstream)."""
+
     def __post_init__(self):
+        if not 24 <= self.epa_horizon_capacity <= 256:
+            raise ValueError("epa_horizon_capacity must be between 24 and 256")
         command = self.commands["motion"]
         if command.extra_objects_file is not None:
             command = replace(command, extra_objects=load_object_configs(command.extra_objects_file))
@@ -70,7 +81,8 @@ class EntityEnvCfg(ManagerBasedRlEnvCfg):
             # Capacity depends on actual entities, never the padded token count.
             self.sim = replace(self.sim, nconmax=max(512 * len(names), self.sim.nconmax or 0),
                                njmax=max(2000 * len(names), self.sim.njmax or 0))
-            spec_fn = partial(_size_contact_buffers, sim_cfg=self.sim, previous=previous)
+            spec_fn = partial(_size_contact_buffers, sim_cfg=self.sim, previous=previous,
+                              epa_horizon_capacity=self.epa_horizon_capacity)
         else:
             spec_fn = previous
         self.scene = replace(self.scene, entities=entities, spec_fn=spec_fn)

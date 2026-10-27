@@ -282,6 +282,10 @@ config. This is an allocation estimate, not a guarantee for all future contact s
 Replay checks Warp's persistent overflow flags after stepping and before episode reset,
 raising on truncated physics instead of recording the transition. This detects physics
 buffer overflow; it does not recover a CUDA out-of-memory failure or save a checkpoint.
+Entity scenes reserve at least64 convex EPA boundary edges per collision pair,
+configurable through `EntityEnvCfg.epa_horizon_capacity`. This is a process-wide
+lower bound applied before graph capture through the MuJoCo-Warp3.11 allocation
+constant, separate from contact/constraint totals. See docs/epa-stall-visit43.md.
 
 Full experiment checkpoints record the split, scheduling contract and visited training
 shapes. Held-out actor transfer is a separate, explicit evaluation API: it validates
@@ -307,6 +311,10 @@ gradients cause a collective skip (Actor) or failure (WM/Critic). Shared entity 
 parameters belong only to the WM optimizer, retaining the existing BPTT freeze contract.
 Running normalizers merge global sample counts, means and variances; missing objects
 and invalid edges never contribute. Empty ranks still participate in collectives.
+Scene preparation and real physics steps synchronize success before the next
+collective. A rank-local exception is reported on all ranks, preventing peers from
+waiting in normalization while the failing rank tears down NCCL. Hung CUDA kernels
+and failed contexts remain outside this Python exception protocol.
 
 Environment counts, batches and Replay sizes are per rank; `sim_steps` is global.
 Schema, geometry-bank contents and update settings must match on all ranks. Metrics

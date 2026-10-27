@@ -204,6 +204,35 @@ def run_training(output, directory):
         (output / f"rank{distributed.rank()}.json").write_text(json.dumps(dict(
             rank=distributed.rank(), iterations=restored.current_learning_iteration,
             hashes=final, sim_steps=restored.sim_steps, normalizer_count=float(restored.pi.robot_norm.count))))
+        # A single rank's physics exception must reach every rank before any
+        # worker enters the next normalizer collective or records a transition.
+        original_step = restored.replay_env.step
+        def failing_step(action):
+            if distributed.rank() == 1:
+                raise RuntimeError("physics buffer overflow EPA_HORIZON")
+            return original_step(action)
+        restored.replay_env.step = failing_step
+        before_size, before_ptr = restored.buffer.size, restored.buffer.ptr
+        try:
+            restored.collect(1, restored._new_stats())
+        except RuntimeError as exc:
+            assert "rank 1" in str(exc) and "EPA_HORIZON" in str(exc)
+        else:
+            raise AssertionError("Physics failure on rank1 was not propagated")
+        assert (restored.buffer.size, restored.buffer.ptr) == (before_size, before_ptr)
+        assert restored.sim_steps == 28
+        # The process group remains usable for orderly, symmetric cleanup.
+        assert distributed.gather_objects("caught") == ["caught", "caught"]
+        def failing_scene():
+            if distributed.rank() == 0:
+                raise ValueError("scene asset unavailable")
+        restored.prepare_collection = failing_scene
+        try:
+            restored.collect(1, restored._new_stats())
+        except RuntimeError as exc:
+            assert "scene preparation" in str(exc) and "rank 0" in str(exc)
+        else:
+            raise AssertionError("Scene failure on rank0 was not propagated")
         dist.barrier()
 
 
