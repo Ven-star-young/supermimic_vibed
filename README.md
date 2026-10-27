@@ -427,9 +427,10 @@ For distributed training across different chair scenes, use the explicit `torchr
 command in [chair-generalization.md](docs/chair-generalization.md#多卡训练).
 Evaluation remains single-process and can load a distributed training checkpoint.
 
-Two-process CPU/Gloo tests cover synchronization, BPTT, checkpoints and resume;
-native simulation regressions run on one GPU. Multi-GPU NCCL throughput and native
-simulation on multiple physical GPUs have not yet been validated.
+Two-process CPU/Gloo tests cover synchronization, BPTT, checkpoints and resume.
+Native NCCL training, BF16, compiled updates and checkpoint resume have also been
+checked on CUHK's two A100 GPUs; see [the validation report](docs/distributed-validation-cuhk.md).
+These short correctness checks do not establish long-run convergence or speedup.
 
 Quantitative evaluation starts each clip at its first frame, disables randomization
 and observation/action noise, and scores until the first failure or clip completion.

@@ -272,6 +272,14 @@ Scene switches mark a replay boundary and reset local observation history. Sampl
 cycles uniformly through scenes in a deterministic shuffled order. Missing collision
 assets never silently remove a chair from the experiment.
 
+Entity scenes size contact/constraint buffers before the native Warp upload. A lazy
+scene callback compiles the assembled model on CPU, runs its initial forward pass,
+and grows the configured floors to twice the observed contacts/constraints rounded
+up to powers of two. This fixes complex chairs exceeding the old 512/2000 per-object
+floors at startup. Larger explicit capacities and existing scene callbacks are retained;
+CLI reconstruction and scene deepcopy rebind the callback to the current simulation
+config. This is an allocation estimate, not a guarantee for all future contact states.
+
 Full experiment checkpoints record the split, scheduling contract and visited training
 shapes. Held-out actor transfer is a separate, explicit evaluation API: it validates
 the physical/policy contract and training geometry provenance, but uses the new test

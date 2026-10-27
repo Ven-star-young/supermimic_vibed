@@ -4,6 +4,8 @@ from dataclasses import dataclass, replace
 from functools import partial
 import os
 
+import mujoco
+
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.entity import EntityCfg
 from mjlab.managers.event_manager import EventTermCfg
@@ -14,6 +16,27 @@ from ..g1_tracking.env_cfgs import make_env_cfg as make_tracking_env_cfg
 from .assets import load_object_configs, make_object_spec, object_names
 from .commands import EntityCommandCfg
 from .events import randomize_entity_physics
+
+
+def _size_contact_buffers(spec, *, sim_cfg, previous=None):
+    """Size from the assembled scene before mjlab uploads its qpos0 to Warp.
+
+    Detailed convex decompositions can exceed the per-object floor even before
+    reset. Keep two times the measured startup contacts/constraints, rounded up
+    to powers of two, and never shrink explicitly configured capacities.
+    """
+    if previous is not None:
+        previous(spec)
+    model = spec.compile()
+    sim_cfg.mujoco.apply(model)
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    for field, count in (("nconmax", data.ncon), ("njmax", data.nefc)):
+        required = 1 << max(0, (2 * count - 1).bit_length())
+        old = getattr(sim_cfg, field) or 0
+        if required > old:
+            setattr(sim_cfg, field, required)
+            print(f"[entity contacts] {field}: {old} -> {required} (startup {count})", flush=True)
 
 
 @dataclass(kw_only=True)
@@ -33,14 +56,22 @@ class EntityEnvCfg(ManagerBasedRlEnvCfg):
             position, quaternion = ((0., 0., 2.), (1., 0., 0., 0.)) if target else (extra.pos, extra.quat)
             entities[name] = EntityCfg(spec_fn=partial(make_object_spec, command, index),
                 init_state=EntityCfg.InitialStateCfg(pos=position, rot=quaternion))
-        self.scene = replace(self.scene, entities=entities)
+        previous = self.scene.spec_fn
+        # Config reconstruction/deepcopy must rebind to the current simulation
+        # config and preserve a user callback without wrapping ourselves twice.
+        if isinstance(previous, partial) and previous.func is _size_contact_buffers:
+            previous = previous.keywords["previous"]
         self.events = dict(self.events)
         # Even empty scenes record robot-ground effective pair properties.
         self.events["entity_physics"] = EventTermCfg(func=randomize_entity_physics, mode="reset")
         if names:
             # Capacity depends on actual entities, never the padded token count.
-            self.sim = replace(self.sim, nconmax=max(512 * len(names), self.sim.nconmax),
-                               njmax=max(2000 * len(names), self.sim.njmax))
+            self.sim = replace(self.sim, nconmax=max(512 * len(names), self.sim.nconmax or 0),
+                               njmax=max(2000 * len(names), self.sim.njmax or 0))
+            spec_fn = partial(_size_contact_buffers, sim_cfg=self.sim, previous=previous)
+        else:
+            spec_fn = previous
+        self.scene = replace(self.scene, entities=entities, spec_fn=spec_fn)
 
 
 def make_env_cfg(play=False, *, object_enabled=True, max_objects=None, extra_objects=()):
