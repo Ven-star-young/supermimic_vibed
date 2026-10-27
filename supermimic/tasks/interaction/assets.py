@@ -49,7 +49,8 @@ def _select(signatures, anchor):
 
 def select_motion_files(cfg):
     path = Path(cfg.motion_dir)
-    files = [path] if path.is_file() else sorted(path.glob("*.npz"))
+    explicit = getattr(cfg, "motion_files", ())
+    files = [Path(file) for file in explicit] if explicit else ([path] if path.is_file() else sorted(path.glob("*.npz")))
     if not files:
         raise FileNotFoundError(f"No standard motion NPZ files found in {path}")
     if not cfg.object_enabled:

@@ -127,6 +127,33 @@ weights. See [the entity interface and usage guide](docs/entity-world-model.md) 
 dimensions, JSON configuration, playback, checkpoint transfer and replay compatibility.
 Software/learning smoke checks do not establish trained sitting performance or generalization.
 
+### 80/20 chair generalization experiment
+
+For one policy trained across many chair geometries, use the dedicated experiment
+entry point rather than the single-scene task launcher. The fixed seed-0 split of
+the current assets contains **151 training chairs / 1391 clips** and **38 held-out
+chairs / 357 clips**. All clips and scale variants of an identical source mesh stay
+in one partition. The learner retains its models, optimizers and Replay while
+rotating physical scenes; held-out evaluation freezes policy/encoder/normalizers.
+
+```bash
+uv run python tools/split_chairs.py  # Run once; never overwrites a saved split.
+uv run --extra motion python tools/prepare_collisions.py \
+  --split-manifest data/splits/sitting_80_20_seed0.json --partition all --workers 4
+uv run python -m supermimic.scripts.chair_experiment train \
+  --split data/splits/sitting_80_20_seed0.json --run-dir logs/sitting_80_20 \
+  --num-envs 128 --iterations-per-chair 50 --iterations 50000
+uv run python -m supermimic.scripts.chair_experiment evaluate \
+  --split data/splits/sitting_80_20_seed0.json \
+  --checkpoint-file logs/sitting_80_20/model_50000.pt \
+  --output results/analysis/sitting_zero_shot.json
+```
+
+The local split has already been generated. Collision preparation is incomplete
+(133 training and 32 held-out shapes missing at split creation); the experiment
+fails explicitly on missing assets instead of changing the split. No full-scale
+training result is claimed. See [experiment protocol and configuration](docs/chair-generalization.md).
+
 ### Legacy single-object shared world model and sitting
 
 `Sitting` adds a free-moving chair, its relative pose in the actor observation,

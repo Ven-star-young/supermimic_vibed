@@ -172,8 +172,18 @@ class SuperMimicRunner:
         phase = min(iteration / self.cfg.lr_decay_iters, 1.0)
         return self.cfg.lr * (0.03 + 0.97 * 0.5 * (1 + math.cos(math.pi * phase)))
 
+    def make_replay_env(self):
+        from .vecenv import ReplayEnvAdapter
+        return ReplayEnvAdapter(self.env, gamma=self.cfg.gamma)
+
+    def prepare_collection(self):
+        """Optional experiment hook; ordinary tasks keep their existing scene."""
+
     @torch.no_grad()
     def collect(self, num_steps, stats):
+        if num_steps == 0:
+            return
+        self.prepare_collection()
         env = self.replay_env
         for _ in range(num_steps):
             observations = self.env.get_observations()
@@ -335,10 +345,8 @@ class SuperMimicRunner:
         del init_at_random_ep_len
         if num_learning_iterations < 1:
             return
-        from .vecenv import ReplayEnvAdapter
-
         self._init_training_models()
-        self.replay_env = ReplayEnvAdapter(self.env, gamma=self.cfg.gamma)
+        self.replay_env = self.make_replay_env()
         self.buffer = ReplayBuffer(self.cfg.buffer_steps, self.replay_env.N, self.device,
                                    state_dim=self.dims.state, action_dim=self.dims.action, context_dim=self.dims.context)
         self.pi.train()

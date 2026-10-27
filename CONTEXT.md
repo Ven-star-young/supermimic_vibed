@@ -253,6 +253,33 @@ Unmodeled extra scene entities remain rejected.
 
 ## Checkpoints and validation
 
+### Chair-disjoint experiments
+
+`motion_data/chair_split.py` defines an immutable geometry-level split, grouping
+identical unscaled mesh arrays before choosing train/test so scale variants cannot
+leak. Seed 0 and fraction 0.8 yield 151/38 chair shapes (1391/357 clips). File hashes,
+geometry identities and membership form a relocatable manifest fingerprint.
+`scripts/chair_experiment.py` is an explicit multi-scene experiment entry point;
+ordinary native train/play tasks keep their single-scene behavior.
+
+`ChairExperimentRunner` keeps one native scene batch resident while preserving one
+learner, all optimizer state, shared geometry encoder and bounded recent Replay.
+Its training-only reference library assigns stable global frame IDs and its geometry
+bank contains only training assets. Physical scene transitions retain local reference
+clocks; the Replay adapter offsets recorded frames into the global reference library.
+Scene switches mark a replay boundary and reset local observation history. Sampling
+cycles uniformly through scenes in a deterministic shuffled order. Missing collision
+assets never silently remove a chair from the experiment.
+
+Full experiment checkpoints record the split, scheduling contract and visited training
+shapes. Held-out actor transfer is a separate, explicit evaluation API: it validates
+the physical/policy contract and training geometry provenance, but uses the new test
+scene's own geometry IDs. It creates no world model, critic, optimizer or replay and
+does not update network weights or normalization buffers. Metrics aggregate by chair
+as well as clip. Reference-conditioned zero-shot geometry evaluation is distinct from
+unseen-motion evaluation or a dedicated stable-sitting success test.
+See [chair-generalization.md](docs/chair-generalization.md) for commands and limitations.
+
 Full checkpoints require task metadata: baseline schema version 2, legacy interaction
 schema version 3, and entity schema version 5. Incompatible layouts and missing metadata are rejected before loading.
 Earlier 99-observation policies cannot load into either current task; their observation

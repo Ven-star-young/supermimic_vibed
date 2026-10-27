@@ -18,6 +18,7 @@ class EntityCommandCfg(MotionCommandCfg):
     max_objects: int = 8
     object_enabled: bool = True
     object_motion_file: str | None = None
+    motion_files: tuple[str, ...] = ()
     collision_cache_dir: str = str(DEFAULT_CACHE_DIR)
     extra_objects: tuple[ObjectCfg, ...] = ()
     extra_objects_file: str | None = None

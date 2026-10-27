@@ -39,14 +39,27 @@ def _prepare_one(path, cache_dir):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("motion", type=Path, help="Standard motion NPZ or directory")
+    parser.add_argument("motion", nargs="?", type=Path, help="Standard motion NPZ or directory")
+    parser.add_argument("--split-manifest", type=Path, help="Prepare members of a fixed chair split")
+    parser.add_argument("--partition", choices=("train", "test", "all"), default="all")
+    parser.add_argument("--data-root", type=Path, help="Relocated split data root")
     parser.add_argument("--cache-dir", type=Path, default=DEFAULT_CACHE_DIR)
     parser.add_argument("--workers", type=int, default=2)
     parser.add_argument("--limit", type=int, help="Process at most this many unique object meshes")
     args = parser.parse_args()
     if args.workers < 1 or (args.limit is not None and args.limit < 1):
         parser.error("workers and limit must be positive")
-    files = sorted(args.motion.glob("*.npz")) if args.motion.is_dir() else [args.motion]
+    if (args.motion is None) == (args.split_manifest is None):
+        parser.error("Provide either motion or --split-manifest")
+    if args.split_manifest:
+        from motion_data.chair_split import load_split, scenes, verify_files
+        manifest, root = load_split(args.split_manifest, args.data_root)
+        partitions = ("train", "test") if args.partition == "all" else (args.partition,)
+        for partition in partitions:
+            verify_files(manifest, root, partition)
+        files = [root / scene["clips"][0]["path"] for partition in partitions for scene in scenes(manifest, partition)]
+    else:
+        files = sorted(args.motion.glob("*.npz")) if args.motion.is_dir() else [args.motion]
     if not files or any(not path.is_file() for path in files):
         parser.error(f"No motion NPZ files at {args.motion}")
     unique = {}
