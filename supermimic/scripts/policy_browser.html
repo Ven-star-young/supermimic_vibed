@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>G1 · 坐椅子策略评测</title>
+<style>
+:root{color-scheme:light;--ink:#1b2b37;--muted:#657581;--line:#dce4e6;--paper:#fff;--accent:#137b70;--bg:#f1f5f5}
+*{box-sizing:border-box}body{margin:0;font:14px/1.5 system-ui,-apple-system,"Noto Sans CJK SC",sans-serif;background:var(--bg);color:var(--ink)}
+button,input,select{font:inherit}button{cursor:pointer;border:1px solid var(--line);background:white;color:var(--ink);border-radius:7px;padding:9px 14px}button:hover{border-color:var(--accent)}button:disabled{opacity:.45;cursor:default}button.primary{background:var(--accent);color:white;border-color:var(--accent)}input,select{border:1px solid var(--line);border-radius:6px;padding:9px;background:white;width:100%;color:var(--ink)}input:focus,select:focus{outline:2px solid #85c6bb;outline-offset:1px}
+header{padding:19px 26px;background:var(--paper);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:16px}h1{font-size:20px;margin:0;font-weight:700;letter-spacing:.01em}header p{margin:3px 0 0;color:var(--muted);font-size:12px}.badge{border:1px solid #bddbd4;background:#edf8f4;border-radius:20px;padding:5px 11px;font-size:12px;color:#1c655b;white-space:nowrap}
+.layout{display:grid;grid-template-columns:310px minmax(0,1fr);min-height:calc(100vh - 91px)}aside{padding:22px 18px;border-right:1px solid var(--line);background:var(--paper)}main{padding:22px;min-width:0}.caption{font-size:11px;font-weight:700;letter-spacing:.12em;color:var(--muted);text-transform:uppercase;margin-bottom:9px}.filters{display:grid;grid-template-columns:1fr 87px;gap:8px}.count{font-size:12px;color:var(--muted);margin:10px 0}.references{height:360px;overflow:auto;border:1px solid var(--line);border-radius:8px}.reference{display:block;width:100%;text-align:left;border:0;border-bottom:1px solid #edf0f1;border-radius:0;padding:11px 12px;word-break:break-word;background:white}.reference.selected{background:#e7f5f0;box-shadow:inset 3px 0 var(--accent)}.reference small{display:block;color:var(--muted);font-size:10px;margin-top:4px}.reference strong{font-size:12px;font-weight:550}.nav{display:flex;gap:8px;margin-top:9px}.nav button{flex:1;padding:6px}.controls{border-top:1px solid var(--line);margin-top:22px;padding-top:20px}.switch{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:600;margin:13px 0}.switch input{width:17px;height:17px;accent-color:var(--accent)}.fields{display:grid;grid-template-columns:1fr 1fr;gap:10px}.fields label{font-size:12px;color:var(--muted)}.fields input{margin-top:4px}.hint{color:var(--muted);font-size:12px;margin:9px 0 16px}.actions{display:flex;gap:8px}.actions .primary{flex:1}.selection{display:flex;justify-content:space-between;gap:15px;align-items:flex-start;margin-bottom:14px}.selection h2{font-size:17px;margin:0;overflow-wrap:anywhere}.selection p{margin:4px 0 0;color:var(--muted);font-size:12px}.status{font-size:12px;display:flex;gap:7px;align-items:center;white-space:nowrap}.dot{width:8px;height:8px;background:#95a2aa;border-radius:50%}.status[data-status=ready] .dot{background:#2b9d79}.status[data-status=loading] .dot,.status[data-status=stopping] .dot{background:#dd9b31}.status[data-status=error] .dot{background:#d24d4d}
+.viewer{position:relative;height:540px;border:1px solid var(--line);background:#e9eeee;border-radius:10px;overflow:hidden}iframe{display:none;border:0;width:100%;height:100%;background:#e9eeee}.placeholder{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:30px}.placeholder b{display:block;font-size:21px;margin:15px 0 8px;font-weight:600}.placeholder p{max-width:460px;color:var(--muted);margin:0;font-size:13px}.chair{font-size:47px;filter:grayscale(.3)}.message{min-height:23px;font-size:12px;color:var(--muted);margin:9px 2px 20px}.message.error{color:#a52d36}.section-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:20px 0 10px}.section-head h3{margin:0;font-size:15px}.section-head span{color:var(--muted);font-size:11px}.metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.metric{background:white;border:1px solid var(--line);border-radius:9px;padding:15px 18px}.metric span{display:block;font-size:12px;color:var(--muted)}.metric b{display:block;font-size:28px;margin:5px 0;color:var(--ink);font-weight:650}.metric small{font-size:11px;color:var(--muted)}.table-wrap{overflow:auto;background:white;border:1px solid var(--line);border-radius:8px}table{border-collapse:collapse;width:100%;font-size:12px;text-align:left;white-space:nowrap}th{font-size:11px;color:var(--muted);font-weight:600;background:#f9fbfb}th,td{padding:10px 12px;border-bottom:1px solid #edf1f1}.empty{text-align:center;color:var(--muted);padding:20px}.success{color:#087560}.failure{color:#a84242}.unknown{color:var(--muted)}details{margin-top:18px;border:1px solid var(--line);border-radius:8px;background:white;padding:12px 15px}summary{cursor:pointer;font-size:12px;color:var(--muted)}pre{max-height:260px;overflow:auto;font:11px/1.6 ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere;margin:10px 0 0;color:#566774}.report-panel{margin-top:24px}.report-note{font-size:12px;color:var(--muted);margin:8px 0}.error-banner{display:none;background:#fff1f0;border:1px solid #efc5c3;padding:13px 18px;border-radius:8px;color:#9c3336;margin-bottom:14px}.footer{font-size:11px;color:var(--muted);margin-top:20px}
+#episodes td:last-child{white-space:normal;min-width:210px;max-width:430px;overflow-wrap:anywhere;line-height:1.65}
+@media(max-width:1050px){.layout{grid-template-columns:270px minmax(0,1fr)}main{padding:18px}.viewer{height:460px}.metrics{gap:8px}.metric{padding:12px}.metric b{font-size:23px}}
+@media(max-width:760px){header{padding:16px}.layout{display:block}aside{border-right:0;border-bottom:1px solid var(--line)}.references{height:180px}.controls{margin-top:15px;padding-top:10px}.viewer{height:430px}.selection{display:block}.status{margin-top:8px}.metrics{grid-template-columns:1fr}.metric b{font-size:24px}.badge{display:none}}
+</style>
+</head>
+<body>
+<header><div><h1>G1 · 坐椅子策略评测</h1><p id="checkpoint">正在连接本地策略浏览器…</p></div><span class="badge">冻结策略 · 物理仿真</span></header>
+<div class="layout">
+<aside>
+<div class="caption">REFERENCE LIBRARY</div>
+<div class="filters"><input id="search" type="search" placeholder="搜索椅子 / reference" aria-label="搜索 reference"><select id="partition" aria-label="数据分组"><option value="all">全部</option><option value="train">训练集</option><option value="test">测试集</option><option value="external">外部</option></select></div>
+<div class="count" id="count">正在加载列表</div><div class="references" id="references" role="listbox" aria-label="Reference 列表"></div>
+<div class="nav"><button id="previous">← 上一个</button><button id="next">下一个 →</button></div>
+<div class="controls"><div class="caption">INITIALIZATION</div><label class="switch"><input id="perturbed" type="checkbox">增加初始化随机干扰</label>
+<div class="fields"><label>起始 seed<input id="seed" type="number" min="0" max="4294967295" step="1" value="0"></label><label>扰动倍率<input id="noise" type="number" min="0" step="0.1" value="1"></label></div>
+<p class="hint" id="init-hint">Clean：从 reference 的位置和速度初始化。每回合记录实际 seed。</p>
+<div class="actions"><button class="primary" id="start">开始 / 重播</button><button id="stop">停止</button></div>
+<p class="hint">切换 reference 或修改参数后点击开始。上一回放退出后才加载下一把椅子。</p></div>
+</aside>
+<main>
+<div class="error-banner" id="error" role="alert"></div>
+<div class="selection"><div><h2 id="reference-name">选择一个 reference</h2><p id="reference-meta">左右拖动旋转视角 · 滚轮缩放</p></div><div class="status" id="status" data-status="idle"><i class="dot"></i><span>未启动</span></div></div>
+<div class="viewer"><iframe id="viewer" title="G1 policy 3D viewer" allow="fullscreen"></iframe><div class="placeholder" id="placeholder"><div><div class="chair">🪑</div><b id="placeholder-title">查看策略如何坐下</b><p id="placeholder-text">从左侧选择 reference，设置初始化方式，然后开始回放。视图加载需要初始化碰撞网格和 GPU 仿真。</p></div></div></div>
+<div class="message" id="message">浏览器已就绪。回放开始后会逐回合更新以下指标。</div>
+<div class="section-head"><h3>当前回放</h3><span id="live-mode">尚无记录</span></div>
+<div class="metrics"><div class="metric"><span>Reference 完整执行成功率</span><b id="completion">—</b><small id="completion-detail">从第 0 帧完整执行，无中途结束</small></div><div class="metric"><span>Stable-contact success rate</span><b id="stable">—</b><small id="stable-detail">严格稳定接触成功率</small></div><div class="metric"><span>已结束回合</span><b id="episodes-count">0</b><small id="coverage">自动重复回放 · seed 逐回合递增</small></div></div>
+<div class="section-head"><h3>逐回合记录</h3><span>显示最近 20 个回合</span></div><div class="table-wrap"><table><thead><tr><th>回合 / seed</th><th>初始化</th><th>时长</th><th>完整执行</th><th>稳定接触</th><th>结果 / 原因</th></tr></thead><tbody id="episodes"><tr><td colspan="6" class="empty">还没有完成的回合</td></tr></tbody></table></div>
+<div class="section-head"><h3>最近回合 · 坐椅子任务指标</h3><span id="metric-episode">尚无记录</span></div>
+<p class="report-note" id="window-note">接触指标在预先指定的末尾稳定窗口统计；跟踪误差只覆盖实际执行的片段。</p>
+<div class="table-wrap"><table><thead><tr><th>指标 / 范围</th><th>均值</th><th>最大值</th><th>最后值</th><th>稳定判定阈值</th></tr></thead><tbody id="task-metrics"><tr><td colspan="5" class="empty">回合结束后显示具体误差、支撑与滑移</td></tr></tbody></table></div>
+<div class="report-panel" id="report-panel" hidden><div class="section-head"><h3>保存的评测 · 当前 reference</h3><span id="report-name"></span></div><p class="report-note" id="report-note"></p><div class="table-wrap"><table><thead><tr><th>初始化</th><th>完整执行成功率</th><th>稳定接触成功率</th><th>已完成 / 计划</th><th>Seeds</th></tr></thead><tbody id="report-conditions"></tbody></table></div></div>
+<details><summary>判定规则与注意事项</summary><p class="hint">完整执行成功要求从第 0 帧一直执行到 reference 结束，没有跟踪失败或提前截断。默认严格稳定接触考察最后 1 秒：全部条件同时满足的时间 ≥95%，连续不稳定间隔 ≤0.04 秒，椅子支撑力 ≥20% 体重，滑移 ≤0.10 m/s，椅子速度 ≤0.05 m/s、角速度 ≤0.15 rad/s，骨盆相对椅子的误差 ≤0.10 m，根部朝向误差 ≤20°。使用自定义配置时以报告中的阈值为准。</p><p class="hint">默认有效支撑区域使用 reference 骨盆下方的几何代理，并非人工标注的座面；可以通过配置为每个 reference 指定椅子局部坐标系中的座面边界。接触成功因此是按明确定义的代理区域判定，不直接等同于语义上的“坐得正确”。</p><p class="hint">非完整起点或评测中断会单独标记。“随机干扰”仅指机器人初始状态扰动，不包含运行中的外部推力。页面只展示当前回放与显式加载的评测文件，不自动把少数可视化回合当成整体泛化结果。</p><pre id="protocol">评测具体阈值会随结果一起记录。</pre></details>
+<details><summary>回放日志与结果文件</summary><p class="hint" id="output-path"></p><pre id="logs">暂无回放日志</pre></details>
+<div class="footer">G1 sitting · 仅本机访问 · 不更新策略参数</div>
+</main></div>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+let catalog=null, selected=0, state=null, frameGeneration=-1, busy=false;
+const labels={train:'训练集',test:'测试集',external:'外部',clean:'Clean',perturbed:'Perturbed'};
+const reasonNames={reference_complete:'完整执行结束',tracking_failure:'跟踪失败并提前终止',timeout:'仿真时间上限',step_limit:'达到步数上限',interrupted:'手动停止',manual_reset:'用户重置',physics_error:'物理仿真异常',physics_overflow:'物理缓冲区溢出',nonfinite:'出现非有限数值',error:'运行异常',metrics_unavailable:'指标不可计算',partial_reference_start:'从 reference 中途开始',reference_does_not_cover_declared_window:'reference 未覆盖指定稳定窗口',initial_phase_is_after_window_start:'初始帧晚于稳定窗口起点',full_reference_not_completed:'未完整执行 reference',declared_window_not_fully_observed:'稳定窗口未完整观测',insufficient_jointly_stable_fraction:'同时稳定的时间比例不足',stability_gap_too_long:'连续不稳定时间过长',support_load_below_required_fraction:'支撑载荷达标比例不足',contact_slip_below_required_fraction:'接触滑移达标比例不足',chair_linear_velocity_below_required_fraction:'椅子线速度达标比例不足',chair_angular_velocity_below_required_fraction:'椅子角速度达标比例不足',pelvis_relative_tracking_below_required_fraction:'骨盆相对椅子的跟踪达标比例不足',root_orientation_tracking_below_required_fraction:'根部朝向跟踪达标比例不足'};
+const invalidOutcomes=new Set(['error','invalid','physics_error','physics_overflow','nonfinite','interrupted','manual_interruption','manual_interrupted']);
+const predicateNames={support_load:'支撑载荷',contact_slip:'接触滑移',chair_linear_velocity:'椅子线速度',chair_angular_velocity:'椅子角速度',pelvis_relative_tracking:'骨盆相对椅子的跟踪',root_orientation_tracking:'根部朝向跟踪'};
+function reasonLabel(reason){if(reasonNames[reason])return reasonNames[reason];for(const [suffix,meaning] of [['_gap_too_long','连续不达标时间过长'],['_below_required_fraction','达标比例不足']])if(reason.endsWith(suffix)){const predicate=reason.slice(0,-suffix.length);return (predicateNames[predicate]||predicate)+meaning;}return reason;}
+function txt(id,value){$(id).textContent=value;}
+function cell(row,value,cls=''){const node=document.createElement('td');node.textContent=value;node.className=cls;row.append(node);return node;}
+function failure(error){txt('error',String(error));$('error').style.display='block';}
+async function api(path,body){const response=await fetch(path,body===undefined?{cache:'no-store'}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const value=await response.json();if(!response.ok)throw Error(value.error||`HTTP ${response.status}`);return value;}
+function visibleReferences(){const search=$('search').value.trim().toLowerCase(),part=$('partition').value;return catalog.references.filter(ref=>(part==='all'||ref.partition===part)&&ref.name.toLowerCase().includes(search));}
+function select(index){selected=index;renderReferences();renderSelected();}
+function renderReferences(){const items=visibleReferences();$('references').replaceChildren();txt('count',`${items.length} / ${catalog.references.length} 个 reference`);for(const ref of items){const button=document.createElement('button');button.className='reference'+(ref.index===selected?' selected':'');button.setAttribute('role','option');button.setAttribute('aria-selected',String(ref.index===selected));const name=document.createElement('strong');name.textContent=ref.name.replace(/\.npz$/,'');const meta=document.createElement('small');meta.textContent=`#${ref.index} · ${labels[ref.partition]||ref.partition}`;button.append(name,meta);button.onclick=()=>select(ref.index);$('references').append(button);}if(!items.length){const empty=document.createElement('p');empty.className='empty';empty.textContent='没有匹配的 reference';$('references').append(empty);}const position=items.findIndex(ref=>ref.index===selected);$('previous').disabled=position<=0;$('next').disabled=position<0||position>=items.length-1;}
+function renderSelected(){const ref=catalog.references.find(ref=>ref.index===selected);txt('reference-name',ref.name);txt('reference-meta',`${labels[ref.partition]||ref.partition} · 修改选择后点击开始 / 重播 · 拖动旋转，滚轮缩放`);renderSavedReport();}
+function conditions(report){return (report?.references||[]).flatMap(ref=>Object.entries(ref.conditions||{}).map(([mode,data])=>({mode,ref,...data})));}
+function episodesFrom(report){return conditions(report).flatMap(group=>(group.episodes||[]).map(ep=>({...ep,condition:ep.condition||group.mode})));}
+function rate(ok,total){return total?`${(100*ok/total).toFixed(1)}%`:'—';}
+function flag(value,eligible){return eligible?(value?'成功':'失败'):'不适用';}
+function matchesReference(item,ref){return ref.sha256?item.sha256===ref.sha256:item.reference===ref.path;}
+function totals(report){const groups=Object.values(report?.summary?.task?.conditions||{});const sum=key=>groups.reduce((value,group)=>value+(group[key]||0),0);return {planned:sum('planned_trials'),executed:sum('executed_trials'),full:sum('full_reference_eligible_trials'),fullOk:sum('full_reference_successes'),stable:sum('stable_contact_eligible_trials'),stableOk:sum('stable_contact_successes'),invalid:sum('invalid_trials')};}
+function metricNumber(value,unit='',factor=1){return Number.isFinite(value)?`${(value*factor).toFixed(3)}${unit?' '+unit:''}`:'—';}
+function renderTaskMetrics(episode){
+  const metrics=episode?.metrics,tracking=metrics?.tracking||{},window=metrics?.stable_window||{},contact=window.contact||{},cfg=metrics?.thresholds||{};
+  $('task-metrics').replaceChildren();txt('metric-episode',episode?`回合 ${episode.episode} · seed ${episode.seed}`:'尚无记录');
+  if(!metrics||!metrics.tracking){const row=document.createElement('tr');cell(row,'回合结束后显示具体误差、支撑与滑移','empty').colSpan=5;$('task-metrics').append(row);txt('window-note','接触指标在预先指定的末尾稳定窗口统计；跟踪误差只覆盖实际执行的片段。');return;}
+  const limit=(field,sign,unit)=>Number.isFinite(cfg[field])?`${sign} ${metricNumber(cfg[field],unit)}`:'—';
+  const rows=[
+    ['关节 RMSE · 已执行片段',tracking.joint_rmse_rad,'rad','跟踪误差',1],
+    ['根部位置误差 · 已执行片段',tracking.root_position_error_m,'m','跟踪误差',1],
+    ['椅子位置误差 · 已执行片段',tracking.chair_position_error_m,'m','跟踪误差',1],
+    ['骨盆相对椅子误差 · 已执行片段',tracking.pelvis_chair_position_error_m,'m','窗口 '+limit('max_pelvis_relative_error_m','≤','m'),1],
+    ['根部朝向误差 · 已执行片段',tracking.root_orientation_error_rad,'°','窗口 '+limit('max_root_orientation_error_deg','≤','°'),180/Math.PI],
+    ['椅子支撑力 / 体重 · 稳定窗口',contact.load_ratio,'BW',limit('min_support_bodyweight','≥','BW'),1],
+    ['最大有效接触滑移 · 稳定窗口',contact.slip_mps,'m/s',limit('max_contact_slip_mps','≤','m/s'),1],
+    ['椅子线速度 · 稳定窗口',contact.chair_linear_mps,'m/s',limit('max_chair_linear_mps','≤','m/s'),1],
+    ['椅子角速度 · 稳定窗口',contact.chair_angular_radps,'rad/s',limit('max_chair_angular_radps','≤','rad/s'),1]
+  ];
+  for(const [name,values,unit,threshold,factor] of rows){const row=document.createElement('tr');cell(row,name);for(const key of ['mean','max','final'])cell(row,metricNumber(values?.[key],unit,factor));cell(row,threshold);$('task-metrics').append(row);}
+  const region=metrics.reference_support_region_provenance==='explicit_chair_local_bounds'?'配置的椅子局部座面边界':'reference 几何代理（非人工座面标注）';
+  txt('window-note',`稳定窗口 ${metricNumber(window.start_s,'s')}–${metricNumber(window.end_s,'s')}；同时稳定 ${metricNumber(window.jointly_stable_fraction,'%',100)}（要求 ≥${metricNumber(cfg.min_stable_fraction,'%',100)}）；最长间断 ${metricNumber(window.max_unstable_gap_s,'s')}（要求 ${limit('max_gap_s','≤','s')}）；稳定接触累计 ${metricNumber(window.stable_contact_duration_s,'s')}。有效支撑区域：${region}。`);
+}
+function renderEpisodes(report){
+  const episodes=episodesFrom(report),s=totals(report);
+  txt('completion',rate(s.fullOk,s.planned));txt('stable',rate(s.stableOk,s.planned));
+  txt('completion-detail',`${s.fullOk} / ${s.planned} 计划回合 · 覆盖 ${rate(s.full,s.planned)}`);
+  txt('stable-detail',`${s.stableOk} / ${s.planned} 计划回合 · 覆盖 ${rate(s.stable,s.planned)}`);
+  txt('episodes-count',episodes.length);txt('coverage',`未执行 ${Math.max(0,s.planned-s.executed)} · 无效 ${s.invalid}`);
+  $('episodes').replaceChildren();
+  if(!episodes.length){const row=document.createElement('tr');cell(row,'还没有完成的回合','empty').colSpan=6;$('episodes').append(row);}
+  for(const episode of episodes.slice(-20).reverse()){
+    const row=document.createElement('tr'),valid=episode.valid!==false&&!invalidOutcomes.has(episode.outcome);
+    const fullEligible=valid&&episode.full_reference_eligible,stableEligible=fullEligible&&episode.stable_contact_eligible;
+    cell(row,`${episode.episode} / ${episode.seed}`);cell(row,labels[episode.condition]||episode.condition);cell(row,`${Number(episode.seconds||0).toFixed(2)} s`);
+    cell(row,flag(episode.full_reference_success,fullEligible),fullEligible?(episode.full_reference_success?'success':'failure'):'unknown');
+    cell(row,flag(episode.stable_contact_success,stableEligible),stableEligible?(episode.stable_contact_success?'success':'failure'):'unknown');
+    cell(row,[...new Set([episode.outcome,...(episode.failure_reasons||[])])].map(reasonLabel).join(' · '));$('episodes').append(row);
+  }
+  renderTaskMetrics(episodes.at(-1));
+  if(report?.protocol)txt('protocol',JSON.stringify(report.protocol,null,2));
+}
+function renderSavedReport(){const report=catalog.report;$('report-panel').hidden=!report;if(!report)return;txt('report-name',catalog.report_name||'评测报告');const ref=catalog.references.find(ref=>ref.index===selected);const groups=conditions(report).filter(group=>matchesReference(group.ref,ref));const summary=(report.summary?.references||[]).find(item=>matchesReference(item,ref));$('report-conditions').replaceChildren();txt('report-note',`报告 checkpoint：${report.checkpoint?.split(/[\\/]/).at(-1)||'未记录'}。成功率以计划回合数为分母；覆盖率为可判定回合 / 计划回合。未执行、无效回合仍占计划分母，不等同于策略失败。`);if(!groups.length){const row=document.createElement('tr');cell(row,'此 reference 尚无评测记录','empty').colSpan=5;$('report-conditions').append(row);}for(const group of groups){const s=summary?.conditions?.[group.mode],row=document.createElement('tr');cell(row,labels[group.mode]||group.mode);cell(row,s?`${rate(s.full_reference_successes,s.planned_trials)} · 覆盖 ${rate(s.full_reference_eligible_trials,s.planned_trials)}`:'统计不可用');cell(row,s?`${rate(s.stable_contact_successes,s.planned_trials)} · 覆盖 ${rate(s.stable_contact_eligible_trials,s.planned_trials)}`:'统计不可用');cell(row,s?`${s.executed_trials} / ${s.planned_trials} · 无效 ${s.invalid_trials}`:'—');cell(row,(group.planned_seeds||[]).join(', '));$('report-conditions').append(row);}if(!state?.report&&report.protocol)txt('protocol',JSON.stringify(report.protocol,null,2));}
+function renderState(next){state=next;$('status').dataset.status=next.status;const names={idle:'未启动',loading:'正在加载',ready:'正在回放',stopping:'正在停止',error:'回放异常'};$('status').lastElementChild.textContent=names[next.status]||next.status;txt('message',next.message);$('message').className='message'+(next.status==='error'?' error':'');$('stop').disabled=!['loading','ready','error'].includes(next.status);txt('logs',next.log_tail||'暂无回放日志');txt('output-path',next.output?`结果：${next.output}`:'');const liveRef=catalog.references.find(ref=>ref.index===next.index);txt('live-mode',next.settings?`${liveRef?.name||''} · ${labels[next.settings.init_mode]} · seed ${next.settings.seed}`:'尚无记录');if(next.status==='ready'){if(frameGeneration!==next.generation){$('viewer').src=next.viewer_url;frameGeneration=next.generation;}$('viewer').style.display='block';$('placeholder').style.display='none';}else{$('viewer').style.display='none';$('placeholder').style.display='flex';if(frameGeneration!==-1){$('viewer').removeAttribute('src');frameGeneration=-1;}txt('placeholder-title',next.status==='loading'?'正在准备物理仿真':next.status==='error'?'回放暂不可用':next.status==='stopping'?'正在释放当前场景':'查看策略如何坐下');txt('placeholder-text',next.message);}renderEpisodes(next.report);}
+async function start(){if(busy)return;busy=true;$('start').disabled=true;$('error').style.display='none';try{const seed=Number($('seed').value),noise=Number($('noise').value);if(!Number.isInteger(seed)||seed<0||seed>=2**32)throw Error('Seed 必须是 0 到 4294967295 的整数');if(!Number.isFinite(noise)||noise<0)throw Error('扰动倍率必须为非负有限数');renderState(await api('/api/start',{index:selected,init_mode:$('perturbed').checked?'perturbed':'clean',seed,noise_scale:noise}));}catch(error){failure(error.message);}finally{busy=false;$('start').disabled=false;}}
+function updateMode(){$('noise').disabled=!$('perturbed').checked;txt('init-hint',$('perturbed').checked?'Perturbed：只扰动机器人初始位置、朝向、速度与关节。seed 逐回合递增。':'Clean：从 reference 的位置和速度初始化。每回合记录实际 seed。');}
+$('search').oninput=renderReferences;$('partition').onchange=renderReferences;$('perturbed').onchange=updateMode;$('start').onclick=start;$('stop').onclick=async()=>{try{renderState(await api('/api/stop',{}));}catch(error){failure(error.message);}};for(const [id,delta] of [['previous',-1],['next',1]])$(id).onclick=()=>{const refs=visibleReferences(),i=refs.findIndex(ref=>ref.index===selected);if(refs[i+delta])select(refs[i+delta].index);};
+async function poll(){try{renderState(await api('/api/state'));}catch(error){failure(`本地浏览器服务连接失败：${error.message}`);}finally{setTimeout(poll,1000);}}
+(async()=>{try{catalog=await api('/api/catalog');selected=catalog.defaults.index;txt('checkpoint',`${catalog.checkpoint} · 迭代 ${catalog.iteration} · ${catalog.references.length} 个 reference`);$('seed').value=catalog.defaults.seed;$('noise').value=catalog.defaults.noise_scale;$('perturbed').checked=catalog.defaults.init_mode==='perturbed';updateMode();renderReferences();renderSelected();poll();}catch(error){failure(error.message);}})();
+</script>
+</body>
+</html>

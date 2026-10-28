@@ -291,3 +291,95 @@ def test_frozen_actor_runs_heldout_geometry_and_rejects_old_schema(
             load_actor(runner, old, manifest)
     finally:
         native.close()
+
+
+def test_success_requires_reference_end_and_failure_has_precedence():
+    from supermimic.scripts.play_policy import classify_outcome, validate_arguments
+    assert classify_outcome(failed=False, reference_end=False) is None
+    assert classify_outcome(failed=False, reference_end=True, step_limit=True) == "reference_complete"
+    assert classify_outcome(failed=True, reference_end=True) == "tracking_failure"
+    assert classify_outcome(failed=False, reference_end=True, timed_out=True) == "timeout"
+    assert classify_outcome(failed=False, reference_end=False, step_limit=True) == "step_limit"
+    with pytest.raises(ValueError, match="frame 0"):
+        validate_arguments(_args("--evaluate", "--random-start"))
+    with pytest.raises(ValueError, match="distinct"):
+        validate_arguments(_args("--evaluate", "--seeds", "7", "7"))
+    args = _args("--evaluate", "--seeds", "19", "83")
+    validate_arguments(args)
+    assert args.viewer == "none" and args.all and args.episodes == 2
+
+
+def test_episode_seeds_do_not_depend_on_previous_episode_length(
+    deployment_data, tmp_path, cuda_device, monkeypatch,
+):
+    from mjlab.envs import ManagerBasedRlEnv
+    from supermimic.scripts.play_policy import DeploymentEnv, make_deployment_cfg
+    root, manifest = deployment_data
+    reference = root / manifest["train"][0]["clips"][0]["path"]
+    cache = tmp_path / "cache"
+    _prepare_box_cache(reference, cache, monkeypatch)
+    args = _args("--init", "perturbed", "--cache-dir", str(cache))
+    native = ManagerBasedRlEnv(make_deployment_cfg(_checkpoint(), reference, args), device=cuda_device)
+    try:
+        starts = []
+        for steps in (1, 3):
+            wrapped = DeploymentEnv(native, episodes=2, max_steps=steps, seeds=[7, 83])
+            try:
+                while not wrapped.finished:
+                    wrapped.step(torch.zeros(1, 29, device=cuda_device))
+                assert [record["seed"] for record in wrapped.records] == [7, 83]
+                assert all(not record["full_reference_success"] for record in wrapped.records)
+                assert all(record["outcome"] == "step_limit" for record in wrapped.records)
+                assert all(record["stable_contact_eligible"] for record in wrapped.records)
+                starts.append(wrapped.records[1]["initial"]["state"])
+            finally:
+                wrapped.close_metrics()
+        torch.testing.assert_close(torch.tensor(starts[0]), torch.tensor(starts[1]), atol=1e-6, rtol=1e-6)
+
+        wrapped = DeploymentEnv(native, episodes=1, seeds=[29])
+        try:
+            wrapped.interrupt()
+            assert wrapped.records[0]["steps"] == 0
+            assert wrapped.records[0]["outcome"] == "interrupted"
+            assert not wrapped.records[0]["full_reference_success"]
+        finally:
+            wrapped.close_metrics()
+    finally:
+        native.close()
+
+
+def test_interrupted_batch_report_keeps_all_planned_references_and_seeds(deployment_data, tmp_path, monkeypatch):
+    from supermimic.scripts import play_policy as module
+    root, manifest = deployment_data
+    checkpoint = tmp_path / "model.pt"
+    torch.save(dict(iteration=10, infos={"sitting_experiment": {
+        "split_fingerprint": manifest["fingerprint"]}}), checkpoint)
+    output = tmp_path / "results.json"
+    def identity(checkpoint, manifest, reference, args):
+        group = next(g for p in ("train", "test") for g in manifest[p]
+                     if any(c["path"] == reference.name for c in g["clips"]))
+        return dict(reference=str(reference), sha256="fixture", shape_key=group["shape_key"],
+                    geometry_partition="train", reference_partition="train", visited_in_checkpoint=True)
+
+    def interrupted(checkpoint, manifest, reference, args, *, on_record, metrics_cfg):
+        assert args.trial_seeds == [3, 9] and args.init_mode == "clean"
+        report = json.loads(output.read_text())
+        assert len(report["references"]) == len(manifest["train"])
+        assert all(set(r["conditions"]) == {"clean", "perturbed"} for r in report["references"])
+        on_record(dict(episode=1, seed=3, condition="clean", initial={"frame": 0},
+            valid=True, outcome="reference_complete", reference_completed=True,
+            full_reference_eligible=True, full_reference_success=True,
+            stable_contact_eligible=True, stable_contact_success=False))
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(module, "reference_identity", identity)
+    monkeypatch.setattr(module, "run_reference", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        module.main(["--checkpoint", str(checkpoint), "--split", str(tmp_path / "split.json"),
+                     "--evaluate", "--seeds", "3", "9", "--output", str(output)])
+    report = json.loads(output.read_text())
+    assert report["status"] == "interrupted"
+    clean = report["summary"]["task"]["conditions"]["clean"]
+    assert clean["planned_trials"] == 2 * len(manifest["train"])
+    assert clean["executed_trials"] == clean["full_reference_successes"] == 1
+    assert clean["unexecuted_trials"] == clean["planned_trials"] - 1
