@@ -104,6 +104,24 @@ uv run python tools/deploy_policy.py --viewer viser --port 8087 --episodes 0
 打开 `http://127.0.0.1:8087`。服务仅绑定本机，支持暂停、单步、重置和相机控制。
 浏览器标签关闭不会自动结束服务；在运行终端Ctrl+C结束。
 
+浏览同一策略在多把椅子上的表现：
+
+```bash
+uv run python -m tools.deploy_policy \
+  --checkpoint logs/mixed/mixed_model_10000.pt --split logs/mixed/split.json \
+  --browse --partition all --port 8088
+```
+
+打开 `http://127.0.0.1:8088`，可搜索椅子、按训练／测试划分筛选、上一把／下一把切换。
+`--partition all` 收录83把训练椅子和22把测试椅子的最终reference；模型依据所选reference
+作为目标，在物理环境中执行Actor动作。每把椅子从指定初态循环运行，Viser内支持暂停、
+重置与调速。`--browse`自动使用Viser和无限回合，仍支持`--init perturbed`等初始化参数。
+
+浏览页使用指定端口，内部Viser使用下一端口（这里为8089），两者都只监听本机。
+切换时先结束上一把椅子的独立回放进程，再启动新进程，避免GPU场景或Viser回调累积；
+首次加载可能需要数秒。关闭浏览器标签不会结束服务，Ctrl+C会清理当前回放子进程。
+每次回放的日志保存在checkpoint旁的`policy_browser/`；加载错误也会显示在页面中。
+
 无窗口运行或批量验证：
 
 ```bash

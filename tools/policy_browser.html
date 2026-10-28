@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>G1 · 策略部署</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, "Noto Sans SC", system-ui, sans-serif; color: #e6edf5; background: #10151d; }
+    * { box-sizing: border-box; }
+    body { margin: 0; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+    header { flex: 0 0 auto; padding: 12px 18px 10px; border-bottom: 1px solid #2c3746; background: #151c26; }
+    .title-row, .controls, .status-row, .partition { display: flex; align-items: center; gap: 10px; }
+    .title-row { justify-content: space-between; gap: 16px; margin-bottom: 10px; }
+    h1 { margin: 0; font-size: 17px; font-weight: 650; white-space: nowrap; letter-spacing: .02em; }
+    .checkpoint { color: #96a6ba; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    button, input, select { font: inherit; font-size: 13px; border: 1px solid #354255; border-radius: 7px; background: #1c2633; color: #e6edf5; min-height: 34px; }
+    button { padding: 6px 12px; cursor: pointer; white-space: nowrap; }
+    button:hover { background: #2b394b; border-color: #64748b; }
+    button:disabled { opacity: .4; cursor: default; }
+    button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid #6dd6c3; outline-offset: 2px; }
+    .partition { gap: 2px; padding: 2px; background: #101721; border: 1px solid #354255; border-radius: 8px; }
+    .partition button { border: 0; min-height: 28px; padding: 4px 11px; background: transparent; color: #9baabd; }
+    .partition button[aria-pressed="true"] { color: #d5fff6; background: #244c48; }
+    input { padding: 7px 10px; width: clamp(130px, 16vw, 220px); }
+    select { flex: 1; min-width: 140px; padding: 7px 30px 7px 10px; }
+    .status-row { margin-top: 8px; color: #98a9be; font-size: 12px; min-height: 18px; }
+    .status { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; color: #d3b975; }
+    .status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+    .status[data-status="ready"] { color: #6dd6b5; }
+    .status[data-status="error"] { color: #ff9d9d; }
+    .current { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .hint { margin-left: auto; white-space: nowrap; color: #718399; }
+    main { flex: 1; min-height: 0; position: relative; background: #10151d; }
+    iframe { border: 0; width: 100%; height: 100%; display: block; }
+    .overlay { position: absolute; inset: 0; display: grid; place-items: center; padding: 20px; background: #10151dc9; backdrop-filter: blur(3px); }
+    .overlay[hidden] { display: none; }
+    .message-card { width: min(460px, 100%); max-height: 90%; overflow: auto; padding: 25px; background: #17212f; border: 1px solid #354255; border-radius: 14px; box-shadow: 0 20px 80px #0005; }
+    .message-card h2 { margin: 0 0 10px; font-size: 18px; }
+    .message-card p { margin: 0; line-height: 1.65; color: #9eafc4; font-size: 13px; overflow-wrap: anywhere; }
+    .loader { display: inline-block; width: 16px; height: 16px; margin-right: 9px; border: 2px solid #355b60; border-top-color: #72dbc5; border-radius: 50%; vertical-align: -2px; animation: spin 1s linear infinite; }
+    .loader[hidden], details[hidden], #retry[hidden] { display: none; }
+    details { margin-top: 16px; color: #b7c5d6; font-size: 12px; }
+    summary { cursor: pointer; }
+    pre { max-height: 200px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; background: #0e1621; padding: 10px; border-radius: 6px; }
+    #retry { margin-top: 16px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .loader { animation: none; } }
+    @media (max-width: 800px) { header { padding: 10px; } .controls { flex-wrap: wrap; gap: 7px; } .partition { flex: 0 0 auto; } input { flex: 1; min-width: 120px; } select { flex-basis: 100%; order: 2; } .hint { display: none; } .checkpoint { max-width: 55%; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="title-row">
+      <h1>G1 · 策略部署</h1>
+      <span class="checkpoint" id="checkpoint">正在读取模型…</span>
+    </div>
+    <nav class="controls" aria-label="选择椅子">
+      <div class="partition" role="group" aria-label="数据划分">
+        <button type="button" data-partition="all" aria-pressed="true">全部</button>
+        <button type="button" data-partition="train" aria-pressed="false">训练</button>
+        <button type="button" data-partition="test" aria-pressed="false">测试</button>
+      </div>
+      <input id="search" type="search" placeholder="搜索椅子…" aria-label="搜索椅子" autocomplete="off">
+      <select id="chair" aria-label="椅子"><option value="">正在读取椅子…</option></select>
+      <button type="button" id="previous" disabled>上一把</button>
+      <button type="button" id="next" disabled>下一把</button>
+      <button type="button" id="restart" disabled>重新开始</button>
+    </nav>
+    <div class="status-row" aria-live="polite">
+      <span class="status" id="status" data-status="loading">准备中</span>
+      <span class="current" id="current">正在加载椅子列表</span>
+      <span class="hint">Actor 驱动 · 真实物理仿真 · 鼠标拖动调整视角</span>
+    </div>
+  </header>
+  <main>
+    <iframe id="viewer" title="G1 策略物理回放" allow="fullscreen"></iframe>
+    <div class="overlay" id="overlay">
+      <section class="message-card" aria-live="polite">
+        <h2><span class="loader" id="loader" aria-hidden="true"></span><span id="overlay-title">准备策略回放</span></h2>
+        <p id="message">正在连接本地回放服务…</p>
+        <details id="error-details" hidden><summary>查看诊断日志</summary><pre id="log-tail"></pre></details>
+        <button type="button" id="retry" hidden>重新连接</button>
+      </section>
+    </div>
+  </main>
+  <script>
+    "use strict";
+    const element = id => document.getElementById(id);
+    const partitionLabels = { train: "训练", test: "测试", external: "外部" };
+    let catalog = null;
+    let state = null;
+    let partition = "all";
+    let visibleReferences = [];
+    let displayedGeneration = null;
+    let frameLoading = false;
+    let pendingSelection = null;
+    let selectionSequence = 0;
+    let refreshInProgress = false;
+    let refreshAgain = false;
+    let renderedReferenceKey = "";
+
+    async function api(path, options = {}) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000);
+      try {
+        const response = await fetch(path, { ...options, signal: controller.signal, cache: "no-store" });
+        if (!response.ok) {
+          let detail = "";
+          try { detail = (await response.json()).error || ""; } catch (_) { /* HTTP status remains useful. */ }
+          throw new Error(detail || `请求失败（HTTP ${response.status}）`);
+        }
+        const body = await response.text();
+        return body ? JSON.parse(body) : null;
+      } finally { clearTimeout(timeout); }
+    }
+
+    function chairLabel(reference) {
+      const name = reference.name.replace(/^sitting__/, "").replace(/\.npz$/, "").replaceAll("_", " ");
+      return `[${partitionLabels[reference.partition] || reference.partition}] ${name}`;
+    }
+
+    function renderReferences() {
+      if (!catalog) return;
+      const query = element("search").value.trim().toLowerCase();
+      visibleReferences = catalog.references.filter(reference =>
+        (partition === "all" || reference.partition === partition) &&
+        `${reference.name} ${chairLabel(reference)}`.toLowerCase().includes(query)
+      );
+      const selectedIndex = pendingSelection?.index ?? state?.index;
+      const referenceKey = JSON.stringify([visibleReferences.map(reference => reference.index), selectedIndex]);
+      if (referenceKey === renderedReferenceKey) return;
+      renderedReferenceKey = referenceKey;
+      const select = element("chair");
+      select.replaceChildren();
+      if (!visibleReferences.some(reference => reference.index === selectedIndex)) {
+        const placeholder = new Option(visibleReferences.length ? `选择椅子 · ${visibleReferences.length} 把` : "没有匹配的椅子", "");
+        placeholder.disabled = true;
+        placeholder.selected = true;
+        select.add(placeholder);
+      }
+      for (const reference of visibleReferences) {
+        const option = new Option(chairLabel(reference), String(reference.index));
+        option.selected = reference.index === selectedIndex;
+        select.add(option);
+      }
+      select.disabled = visibleReferences.length === 0;
+      element("previous").disabled = visibleReferences.length === 0;
+      element("next").disabled = visibleReferences.length === 0;
+      element("restart").disabled = selectedIndex === undefined || selectedIndex === null;
+    }
+
+    function showOverlay(title, message, { error = false, log = "", retry = false } = {}) {
+      element("overlay").hidden = false;
+      element("overlay-title").textContent = title;
+      element("message").textContent = message;
+      element("loader").hidden = error;
+      element("error-details").hidden = !log;
+      element("log-tail").textContent = log;
+      element("retry").hidden = !retry;
+    }
+
+    function renderState(nextState) {
+      state = nextState;
+      if (pendingSelection && nextState.index === pendingSelection.index && nextState.generation !== pendingSelection.generation) {
+        pendingSelection = null;
+      }
+      const activeIndex = pendingSelection?.index ?? state.index;
+      const reference = catalog?.references.find(item => item.index === activeIndex);
+      element("current").textContent = reference ? chairLabel(reference) : "正在准备场景";
+      element("current").title = reference?.name || "";
+      const status = pendingSelection ? "loading" : state.status;
+      element("status").dataset.status = status;
+      element("status").textContent = { ready: "回放中", loading: "场景加载中", error: "回放异常" }[status] || status;
+      renderReferences();
+      if (pendingSelection) {
+        showOverlay("正在切换椅子", "正在创建物理场景并加载策略；首次加载可能稍需等待。");
+      } else if (state.status === "error") {
+        showOverlay("回放未能启动", state.message || "请重新开始，或选择另一把椅子。", { error: true, log: state.log_tail || "" });
+      } else if (state.status !== "ready") {
+        showOverlay("正在准备物理场景", state.message || "正在加载模型与椅子碰撞几何…");
+      } else {
+        if (displayedGeneration !== state.generation) {
+          displayedGeneration = state.generation;
+          frameLoading = true;
+          element("viewer").src = `${state.viewer_url.replace(/\/$/, "")}/?generation=${encodeURIComponent(state.generation)}`;
+        }
+        if (frameLoading) showOverlay("正在连接回放画面", "物理场景已就绪，正在连接可视化页面…");
+        else element("overlay").hidden = true;
+      }
+    }
+
+    async function refreshState() {
+      if (refreshInProgress) { refreshAgain = true; return; }
+      refreshInProgress = true;
+      try {
+        renderState(await api("/api/state"));
+      } catch (error) {
+        element("status").dataset.status = "error";
+        element("status").textContent = "连接中断";
+        showOverlay("暂时无法连接回放服务", `${error.message}。正在自动重试。`, { error: true, retry: true });
+      } finally {
+        refreshInProgress = false;
+        if (refreshAgain) { refreshAgain = false; refreshState(); }
+      }
+    }
+
+    async function selectChair(index) {
+      if (!Number.isInteger(index)) return;
+      const requestSequence = ++selectionSequence;
+      pendingSelection = { index, generation: state?.generation };
+      if (state) renderState(state);
+      else showOverlay("正在加载椅子", "正在准备策略与物理场景…");
+      try {
+        await api("/api/select", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ index }) });
+        if (requestSequence === selectionSequence) await refreshState();
+      } catch (error) {
+        if (requestSequence !== selectionSequence) return;
+        pendingSelection = null;
+        element("status").dataset.status = "error";
+        element("status").textContent = "切换失败";
+        showOverlay("未能切换椅子", error.message, { error: true, retry: true });
+        renderReferences();
+      }
+    }
+
+    function navigateChair(direction) {
+      if (!visibleReferences.length) return;
+      const position = visibleReferences.findIndex(reference => reference.index === (pendingSelection?.index ?? state?.index));
+      const nextPosition = position < 0 ? (direction > 0 ? 0 : visibleReferences.length - 1) : (position + direction + visibleReferences.length) % visibleReferences.length;
+      selectChair(visibleReferences[nextPosition].index);
+    }
+
+    async function initialize() {
+      try {
+        const [nextCatalog, nextState] = await Promise.all([api("/api/catalog"), api("/api/state")]);
+        catalog = nextCatalog;
+        const filename = catalog.checkpoint.split(/[\\/]/).pop();
+        element("checkpoint").textContent = `迭代 ${Number(catalog.iteration).toLocaleString()} · ${filename}`;
+        element("checkpoint").title = catalog.checkpoint;
+        for (const button of document.querySelectorAll("[data-partition]")) {
+          const part = button.dataset.partition;
+          const count = catalog.references.filter(reference => part === "all" || reference.partition === part).length;
+          button.textContent = `${part === "all" ? "全部" : partitionLabels[part]} ${count}`;
+        }
+        renderState(nextState);
+      } catch (error) {
+        element("status").dataset.status = "error";
+        element("status").textContent = "连接失败";
+        showOverlay("无法读取回放列表", error.message, { error: true, retry: true });
+      }
+    }
+
+    document.querySelectorAll("[data-partition]").forEach(button => button.addEventListener("click", () => {
+      partition = button.dataset.partition;
+      document.querySelectorAll("[data-partition]").forEach(item => item.setAttribute("aria-pressed", String(item === button)));
+      renderReferences();
+    }));
+    element("search").addEventListener("input", renderReferences);
+    element("chair").addEventListener("change", event => { if (event.target.value !== "") selectChair(Number(event.target.value)); });
+    element("previous").addEventListener("click", () => navigateChair(-1));
+    element("next").addEventListener("click", () => navigateChair(1));
+    element("restart").addEventListener("click", () => selectChair(pendingSelection?.index ?? state?.index));
+    element("retry").addEventListener("click", () => catalog ? refreshState() : initialize());
+    element("viewer").addEventListener("load", () => {
+      if (state?.status === "ready" && !pendingSelection && displayedGeneration === state.generation) {
+        frameLoading = false;
+        element("overlay").hidden = true;
+      }
+    });
+    initialize();
+    setInterval(() => { if (catalog) refreshState(); }, 1500);
+  </script>
+</body>
+</html>

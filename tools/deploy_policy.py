@@ -49,7 +49,7 @@ def build_parser():
     source.add_argument("--reference", type=Path, help="One NPZ path, or a filename relative to data-root")
     source.add_argument("--references", type=Path, help="Your reference choices JSON or exported manifest.json")
     parser.add_argument("--selection", type=Path, help="Initial keep/reject JSON for relocated reference choices")
-    parser.add_argument("--partition", choices=("train", "test"), default="train")
+    parser.add_argument("--partition", choices=("train", "test", "all"), default="train")
     parser.add_argument("--index", type=int, default=0, help="Index in the list printed by --list")
     parser.add_argument("--list", action="store_true", help="List references and exit without creating physics")
     parser.add_argument("--all", action="store_true", help="Run all listed references sequentially (headless only)")
@@ -62,6 +62,7 @@ def build_parser():
     parser.add_argument("--episodes", type=int, default=1, help="Episodes per reference; 0 repeats until viewer closes")
     parser.add_argument("--max-steps", type=int, help="Optional per-episode cutoff, reported separately from completion")
     parser.add_argument("--viewer", choices=("native", "viser", "none"), default="native")
+    parser.add_argument("--browse", action="store_true", help="Choose chairs interactively in a local browser; uses Viser")
     parser.add_argument("--port", type=int, default=8087, help="Viser port on localhost")
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--cache-dir", type=Path, default=DEFAULT_CACHE_DIR)
@@ -78,7 +79,8 @@ def resolve_references(args, manifest, root):
         source, groups, _ = load_reference_source(args.references, args.data_root, selection_path=args.selection)
         paths = [source / clip["path"] for group in groups for clip in group["clips"]]
     else:
-        paths = [root / clip["path"] for group in manifest[args.partition] for clip in group["clips"]]
+        partitions = ("train", "test") if args.partition == "all" else (args.partition,)
+        paths = [root / clip["path"] for part in partitions for group in manifest[part] for clip in group["clips"]]
     known = {c["path"]: c["sha256"] for part in ("train", "test") for g in manifest[part] for c in g["clips"]}
     for path in paths:
         if not path.is_file():
@@ -255,6 +257,10 @@ def run_reference(checkpoint, manifest, reference, args):
                     import viser
                     server = viser.ViserServer(host="127.0.0.1", port=args.port, label="G1 policy deployment")
                 viewer = EpisodeViewer(env, policy, **({"viser_server": server} if server else {}))
+                if args.viewer == "viser":
+                    # mjviser measures elevation above the horizon; the native
+                    # MuJoCo default is negative and would start below the floor.
+                    viewer.cfg = replace(viewer.cfg, elevation=20., azimuth=120., distance=2.8)
                 viewer.run()
                 if viewer._last_error:
                     raise RuntimeError(viewer._last_error)
@@ -271,6 +277,12 @@ def run_reference(checkpoint, manifest, reference, args):
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
+    if args.browse:
+        if args.all or args.output:
+            raise ValueError("--browse cannot be combined with --all or --output; use headless runs for evaluation reports")
+        args.viewer, args.episodes = "viser", 0
+    if not 1 <= args.port <= (65534 if args.browse else 65535):
+        raise ValueError("Invalid viewer port (browse also uses port + 1)")
     if (args.index < 0 or args.episodes < 0 or args.start_frame < 0
             or not math.isfinite(args.noise_scale) or args.noise_scale < 0
             or (args.max_steps is not None and args.max_steps < 1)):
@@ -293,6 +305,9 @@ def main(argv=None):
     checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
     if checkpoint.get("task", {}).get("chair_experiment", {}).get("split_fingerprint") != manifest["fingerprint"]:
         raise ValueError("Checkpoint and training split fingerprints differ")
+    if args.browse:
+        from tools.policy_browser import serve
+        return serve(args, manifest, paths, checkpoint["iteration"])
     report = dict(checkpoint=str(args.checkpoint.resolve()), checkpoint_sha256=file_digest(args.checkpoint),
                   iteration=checkpoint["iteration"], init_mode=args.init_mode, noise_scale=args.noise_scale,
                   seed=args.seed, random_start=args.random_start, start_frame=args.start_frame, references=[])

@@ -50,6 +50,7 @@ def test_reference_selection_defaults_to_train_and_explicit_reference_can_be_hel
     assert resolve_references(_args(), manifest, root) == expected
     heldout = root / manifest["test"][0]["clips"][0]["path"]
     assert resolve_references(_args("--partition", "test"), manifest, root) == [heldout]
+    assert resolve_references(_args("--partition", "all"), manifest, root) == sorted([*expected, heldout])
     assert resolve_references(_args("--reference", str(heldout)), manifest, root) == [heldout]
 
 
