@@ -1,5 +1,12 @@
 # 本地策略部署与 reference 验证
 
+2026-10-28：混合训练10000模型的完整本地资料位于 `logs/mixed/`，入口
+`logs/mixed/play.sh`，浏览器地址 `http://127.0.0.1:8088`。模型、参考和105份compact碰撞
+缓存已与CUHK校验；详见该目录README。下面的2000模型记录是较早的轮换训练检查，
+使用混合模型时请显式传 `--checkpoint logs/mixed/mixed_model_10000.pt` 和
+`--split logs/mixed/split.json`。部署预检查与物理环境都按checkpoint的collision profile加载，
+不会因为存在另一种profile的缓存就使用它。
+
 统一入口：`tools/deploy_policy.py`。它使用现有mjlab物理环境执行Actor生成的29维关节
 位置动作，保留50 Hz控制与原任务终止规则。它是仿真策略运行，不是运动学reference
 回放，也不向实机发送命令。单次只驻留一个环境，适合本地8 GB GPU。

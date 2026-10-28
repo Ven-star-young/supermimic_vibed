@@ -209,7 +209,10 @@ class DeploymentEnv(RslRlVecEnvWrapper):
 
 def run_reference(checkpoint, manifest, reference, args):
     clip = load_motion(reference)
-    load_collision_parts(clip, args.cache_dir)  # Explicit missing-cache error before allocating CUDA.
+    collision_profile = checkpoint["task"].get("chair_experiment", {}).get("collision_profile", "default")
+    # Validate the same approximation that will be used by physics and the
+    # geometry encoder, before allocating CUDA. Compact bundles need no default cache.
+    load_collision_parts(clip, args.cache_dir, profile=collision_profile)
     key = shape_key(clip)
     partitions = [p for p in ("train", "test") if key in {g["shape_key"] for g in manifest[p]}]
     digest = file_digest(reference)
@@ -217,6 +220,7 @@ def run_reference(checkpoint, manifest, reference, args):
         c["sha256"] for g in manifest[p] for c in g["clips"]}]
     exposure = (checkpoint.get("infos") or {}).get("chair_experiment", {}).get("visited_train_shapes", [])
     identity = dict(reference=str(reference), sha256=digest, shape_key=key,
+                    collision_profile=collision_profile,
                     geometry_partition=partitions[0] if partitions else "external",
                     reference_partition=reference_partitions[0] if reference_partitions else "external",
                     visited_in_checkpoint=key in exposure)

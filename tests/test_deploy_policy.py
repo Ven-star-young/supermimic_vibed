@@ -106,7 +106,7 @@ def test_deployment_uses_checkpoint_contract_and_fixed_evaluation_physics(deploy
     assert command.collision_cache_dir == str(tmp_path)
 
 
-def _prepare_box_cache(reference, cache, monkeypatch):
+def _prepare_box_cache(reference, cache, monkeypatch, profile="default"):
     from motion_data import collision
     original = importlib.metadata.version
     monkeypatch.setattr(importlib.metadata, "version",
@@ -115,7 +115,51 @@ def _prepare_box_cache(reference, cache, monkeypatch):
     # is convex. Native MuJoCo/Warp scene construction and resets remain real.
     monkeypatch.setitem(sys.modules, "coacd", SimpleNamespace(set_log_level=lambda _: None,
         Mesh=lambda vertices, faces: (vertices, faces), run_coacd=lambda mesh, **_: [mesh]))
-    collision.prepare_collision(load_motion(reference), cache)
+    collision.prepare_collision(load_motion(reference), cache, profile=profile)
+
+
+def test_compact_deployment_accepts_only_compact_cache(deployment_data, tmp_path, monkeypatch, capsys):
+    from motion_data.collision import collision_key
+    from tools import deploy_policy
+
+    root, manifest = deployment_data
+    reference = root / manifest["train"][0]["clips"][0]["path"]
+    cache = tmp_path / "compact_cache"
+    _prepare_box_cache(reference, cache, monkeypatch, profile="compact")
+    assert not (cache / f"{collision_key(load_motion(reference))}.npz").exists()
+    checkpoint = _checkpoint()
+    checkpoint["task"]["chair_experiment"] = {"collision_profile": "compact"}
+
+    class PhysicsReached(Exception):
+        pass
+
+    def inspect_physics(cfg, *, device):
+        assert cfg.commands["motion"].collision_profile == "compact"
+        raise PhysicsReached
+
+    monkeypatch.setattr(deploy_policy, "ManagerBasedRlEnv", inspect_physics)
+    with pytest.raises(PhysicsReached):
+        deploy_policy.run_reference(checkpoint, manifest, reference, _args("--cache-dir", str(cache)))
+    identity = json.loads(capsys.readouterr().out.split("[deploy] ")[-1])
+    assert identity["collision_profile"] == "compact"
+
+
+def test_compact_deployment_rejects_default_only_cache_before_physics(deployment_data, tmp_path, monkeypatch):
+    from tools import deploy_policy
+
+    root, manifest = deployment_data
+    reference = root / manifest["train"][0]["clips"][0]["path"]
+    cache = tmp_path / "default_cache"
+    _prepare_box_cache(reference, cache, monkeypatch)
+    checkpoint = _checkpoint()
+    checkpoint["task"]["chair_experiment"] = {"collision_profile": "compact"}
+
+    def unexpected_physics(*args, **kwargs):
+        pytest.fail("Missing compact cache must fail before physics allocation")
+
+    monkeypatch.setattr(deploy_policy, "ManagerBasedRlEnv", unexpected_physics)
+    with pytest.raises(FileNotFoundError, match="--profile compact"):
+        deploy_policy.run_reference(checkpoint, manifest, reference, _args("--cache-dir", str(cache)))
 
 
 def test_native_clean_perturbed_reset_and_history_are_reproducible(
