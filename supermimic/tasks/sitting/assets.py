@@ -17,11 +17,11 @@ from motion_data import load_motion
 from motion_data.collision import add_object_geoms, collision_key, load_collision_parts
 
 
-def geometry_key(clip):
+def geometry_key(clip, profile="default"):
     scale = np.asarray(clip["object_scale"], dtype="<f8")
     if scale.shape != (3,) or not np.isfinite(scale).all() or np.any(scale <= 0):
         raise ValueError("Object scale must be a positive finite 3-vector")
-    return collision_key(clip) + ":" + hashlib.sha256(scale.tobytes()).hexdigest()
+    return collision_key(clip, profile=profile) + ":" + hashlib.sha256(scale.tobytes()).hexdigest()
 
 
 def _signature(path):
@@ -49,11 +49,10 @@ def _select(signatures, anchor):
 
 def select_motion_files(cfg):
     path = Path(cfg.motion_dir)
-    files = [path] if path.is_file() else sorted(path.glob("*.npz"))
+    explicit = getattr(cfg, "motion_files", ())
+    files = [Path(file) for file in explicit] if explicit else ([path] if path.is_file() else sorted(path.glob("*.npz")))
     if not files:
         raise FileNotFoundError(f"No standard motion NPZ files found in {path}")
-    if not cfg.object_enabled:
-        return files
     anchor = Path(cfg.object_motion_file) if cfg.object_motion_file else files[0]
     return list(_select(tuple(_signature(file) for file in files), _signature(anchor)))
 
@@ -90,24 +89,24 @@ def mass_properties(clip, mass=10.0):
 
 
 def sample_geometry(parts, scale, count=1024):
-    """Deterministic area-weighted collision-surface points in body-local metres.
-
-    Keep the body origin and scale. The shared geometry encoder owns the later
-    normalization by maximum extent, so physical scale is applied exactly once.
-    """
+    """Deterministic area sampling of physical collision surfaces and normals."""
     triangles = np.concatenate([vertices[faces] * scale for vertices, faces in parts])
-    area = np.linalg.norm(np.cross(triangles[:, 1] - triangles[:, 0],
-                                   triangles[:, 2] - triangles[:, 0]), axis=1) / 2
-    if not np.isfinite(area).all() or area.sum() <= 0:
-        raise ValueError("Object collision surface has no finite positive area")
+    normals = np.cross(triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0])
+    twice_area = np.linalg.norm(normals, axis=1)
+    valid = np.isfinite(twice_area) & (twice_area > 1e-12)
+    if not valid.any():
+        raise ValueError("Collision geometry contains no finite positive-area triangles")
+    triangles, normals, twice_area = triangles[valid], normals[valid], twice_area[valid]
     rng = np.random.default_rng(0)
-    selected = triangles[rng.choice(len(triangles), size=count, p=area / area.sum())]
+    index = rng.choice(len(triangles), count, p=twice_area / twice_area.sum())
     uv = rng.random((count, 2))
     root = np.sqrt(uv[:, :1])
     weights = np.concatenate((1 - root, root * (1 - uv[:, 1:]), root * uv[:, 1:]), axis=1)
-    points = (selected * weights[..., None]).sum(axis=1)
-    extent = np.ptp(triangles.reshape(-1, 3), axis=0)
-    return points.astype(np.float32), extent.astype(np.float32)
+    xyz = (triangles[index] * weights[..., None]).sum(axis=1)
+    normal = normals[index] / twice_area[index, None]
+    points = np.concatenate((xyz, normal), axis=1).astype(np.float32)
+    extents = np.ptp(triangles.reshape(-1, 3), axis=0).astype(np.float32)
+    return points, extents
 
 
 @dataclass(frozen=True)
@@ -122,27 +121,29 @@ class ObjectAsset:
 
 
 @lru_cache(maxsize=8)
-def _load_asset(signature, cache_dir):
+def _load_asset(signature, cache_dir, profile="default"):
     clip = load_motion(signature[0])
-    parts = load_collision_parts(clip, cache_dir)
+    parts = load_collision_parts(clip, cache_dir, profile=profile)
     com, inertia = mass_properties(clip)
     points, extent = sample_geometry(parts, clip["object_scale"])
-    return ObjectAsset(clip, parts, geometry_key(clip), com, inertia, points, extent)
+    return ObjectAsset(clip, parts, geometry_key(clip, profile), com, inertia, points, extent)
 
 
 def selected_asset(cfg):
-    return _load_asset(_signature(select_motion_files(cfg)[0]), str(Path(cfg.collision_cache_dir).resolve()))
+    return _load_asset(_signature(select_motion_files(cfg)[0]), str(Path(cfg.collision_cache_dir).resolve()),
+                       getattr(cfg, "collision_profile", "default"))
 
 
 def make_chair_spec(cfg):
     asset = selected_asset(cfg)
     spec = mujoco.MjSpec()
-    body = spec.worldbody.add_body(name="chair", pos=asset.clip["object_pos"][0],
-                                   quat=asset.clip["object_quat"][0])
+    # Reference world poses belong to reset, not the shared variant topology.
+    body = spec.worldbody.add_body(name="chair")
     body.add_freejoint(name="chair_free")
     body.explicitinertial = True
-    body.mass, body.ipos = 10.0, asset.com
-    inertia = asset.inertia
+    mass = cfg.object_physical_cfg.evaluation_mass
+    body.mass, body.ipos = mass, asset.com
+    inertia = asset.inertia * (mass / 10.0)
     body.fullinertia = inertia[[0, 1, 2, 0, 0, 1], [0, 1, 2, 1, 2, 2]]
     add_object_geoms(spec, body, asset.clip, asset.parts)
     for geom in list(spec.geoms):
@@ -152,6 +153,7 @@ def make_chair_spec(cfg):
         # ground-only copy keeps chair-ground friction fixed and avoids double
         # contacts; robot geoms have contype=0 and ground has contype=1.
         geom.priority = 1
+        geom.friction = [cfg.object_physical_cfg.evaluation_robot_friction, .005, .0001]
         body.add_geom(
             name=geom.name + "_ground", type=geom.type, meshname=geom.meshname,
             pos=geom.pos, quat=geom.quat, group=3, contype=0, conaffinity=1,

@@ -23,7 +23,7 @@ def cpu_kin(asset_path):
 
 @pytest.fixture(scope="session")
 def motion_dir(cpu_kin):
-    from tools._smoke import motion_directory
+    from tests.helpers import motion_directory
     with motion_directory(cpu_kin) as directory:
         yield directory
 
@@ -44,7 +44,7 @@ def cuda_device(asset_path):
 
 @pytest.fixture(scope="module")
 def native_eval_env(cuda_device, motion_dir):
-    from tools._smoke import native_env
+    from tests.helpers import native_env
     with native_env(4, device=cuda_device, motion_dir=motion_dir, auto_reset=False) as env:
         yield env
 
@@ -58,6 +58,6 @@ def eval_env(native_eval_env):
 @pytest.fixture(scope="module")
 def train_env(cuda_device, motion_dir):
     from supermimic.rl.vecenv import ReplayEnvAdapter
-    from tools._smoke import native_env
+    from tests.helpers import native_env
     with native_env(4, device=cuda_device, motion_dir=motion_dir, play=False, auto_reset=False) as env:
         yield ReplayEnvAdapter(env)

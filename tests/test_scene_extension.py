@@ -25,7 +25,7 @@ def test_configured_scene_integrates_object_contacts_and_shared_reward(cuda_devi
     from mjlab.sensor import ContactMatch, ContactSensorCfg
     from supermimic.mdp import MDP, RewardCfg
     from supermimic.tasks.g1_tracking.env_cfgs import make_env_cfg
-    from tools._smoke import reset_frames
+    from tests.helpers import reset_frames
 
     cfg = make_env_cfg(play=True)
     cfg.scene.num_envs = 2

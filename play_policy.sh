@@ -8,7 +8,8 @@ if [[ ! -x "$project_dir/.venv/bin/python" ]]; then
 fi
 if [[ $# -eq 0 ]]; then
     echo "Usage: $0 /path/to/model.pt [options]"
-    echo "Options: --start first | --seed 42 | --training-conditions | --object-motion-file /path/to/chair_motion.npz"
+    echo "Options: --init clean|perturbed | --random-start | --partition test | --reference /path/to/motion.npz"
+    echo "Requires a checkpoint from the task-specific sitting branch."
     echo "Full help: $0 --help"
     exit 0
 fi

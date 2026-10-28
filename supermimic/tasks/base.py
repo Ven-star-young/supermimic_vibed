@@ -38,6 +38,26 @@ class TrackingTask:
     def goal_dim(self, frames):
         return self.dimensions.goal_per_frame * frames
 
+    def make_policy(self, history_length, goal_frames, geometry_bank=None):
+        from .g1_tracking.models import Policy
+        return Policy(self.dimensions.observation, self.goal_dim(goal_frames),
+                      hist=history_length, action_dim=self.dimensions.action)
+
+    def make_world_model(self, geometry_bank=None, geometry_encoder=None):
+        from .g1_tracking.models import WorldModel
+        return WorldModel(dynamics=self.dynamics)
+
+    def make_critic(self, goal_frames):
+        from .g1_tracking.models import Critic
+        return Critic(self.dimensions.critic_features + self.goal_dim(goal_frames))
+
+    def geometry_ids(self, context):
+        return None
+
+    def critic_input(self, state, frame, normalized_context, goal, goal_frames, geometry=None):
+        import torch
+        return torch.cat((self.mdp.critic_features(state, frame, normalized_context), goal), -1)
+
     def validate_model_coverage(self):
         extra = set(self.env_cfg.scene.entities) - set(self.modeled_entities)
         if extra:

@@ -39,7 +39,7 @@ def sitting_env(cuda_device, sitting_file):
 
 
 def reset_frames(env, frames=(3, 137), ids=None):
-    from tools._smoke import reset_frames as reset
+    from tests.helpers import reset_frames as reset
     return reset(env, torch.tensor(frames, device=env.device), ids)
 
 
@@ -58,19 +58,14 @@ def test_sitting_config_is_lazy_and_cli_uses_updated_command(monkeypatch):
     from supermimic.tasks.sitting.env_cfgs import SittingEnvCfg, make_env_cfg
     monkeypatch.setattr(assets, "load_motion", lambda *_: pytest.fail("Factory must not read dataset"))
     cfg = make_env_cfg(play=True)
-    assert "chair" not in make_env_cfg(object_enabled=False).scene.entities
+    assert set(cfg.scene.entities) == {"robot", "chair"}
     parsed = tyro.cli(SittingEnvCfg, default=cfg, config=mjlab.TYRO_FLAGS,
                       args=["--commands.motion.motion-dir", "/tmp/updated-motion-directory"])
     assert parsed.scene.entities["chair"].spec_fn.args[0] is parsed.commands["motion"]
     assert parsed.scene.entities["chair"].spec_fn.args[0].motion_dir == "/tmp/updated-motion-directory"
     assert cfg.commands["motion"].motion_dir != parsed.commands["motion"].motion_dir
-    tracking = make_env_cfg(object_enabled=False)
-    enabled = replace(tracking, commands={"motion": replace(tracking.commands["motion"], object_enabled=True)})
-    assert "chair" in enabled.scene.entities and "object_physics" in enabled.events
-    assert enabled.sim.nconmax >= 512 and enabled.sim.njmax >= 2000
-    assert "chair" not in tracking.scene.entities and "object_physics" not in tracking.events
-    disabled = replace(enabled, commands={"motion": replace(enabled.commands["motion"], object_enabled=False)})
-    assert "chair" not in disabled.scene.entities and "object_physics" not in disabled.events
+    assert cfg.sim.nconmax >= 512 and cfg.sim.njmax >= 2000
+    assert "geometry_id" in cfg.observations
 
 
 def test_geometry_sampling_scale_and_missing_cache_are_explicit(sitting_file, tmp_path):
@@ -81,7 +76,8 @@ def test_geometry_sampling_scale_and_missing_cache_are_explicit(sitting_file, tm
     points, extent = sample_geometry(asset.parts, asset.clip["object_scale"])
     np.testing.assert_array_equal(points, asset.points)
     doubled, double_extent = sample_geometry(asset.parts, asset.clip["object_scale"] * 2)
-    np.testing.assert_allclose(doubled, 2 * points, atol=1e-7)
+    np.testing.assert_allclose(doubled[:, :3], 2 * points[:, :3], atol=1e-7)
+    np.testing.assert_allclose(doubled[:, 3:], points[:, 3:], atol=1e-7)
     np.testing.assert_allclose(double_extent, 2 * extent, atol=1e-7)
     with pytest.raises(FileNotFoundError, match="prepare_collisions"):
         selected_asset(replace(cfg, collision_cache_dir=str(tmp_path)))
@@ -97,7 +93,6 @@ def test_scene_selection_filters_shape_and_scale_without_using_filenames(sitting
     save_motion(tmp_path / "different-scale.npz", {**clip, "object_scale": clip["object_scale"] * 1.01})
     cfg = SittingCommandCfg(motion_dir=str(tmp_path))
     assert {p.name for p in select_motion_files(cfg)} == {"a.npz", "unrelated-name.npz"}
-    assert len(select_motion_files(replace(cfg, object_enabled=False))) == 3
     cfg.object_motion_file = str(tmp_path / "different-scale.npz")
     assert [p.name for p in select_motion_files(cfg)] == ["different-scale.npz"]
 
@@ -110,8 +105,10 @@ def test_sitting_reset_uses_one_reference_frame_for_robot_and_object(sitting_env
     for actual, reference in zip(cmd.state(), expected):
         torch.testing.assert_close(actual, reference, atol=3e-5, rtol=3e-5)
     assert obs["state"].shape == (2, 84)
-    assert obs["policy_history"].shape == (2, 990)
-    assert obs["context"].shape == (2, 47)
+    assert obs["policy_history"].shape == (2, 1020)
+    assert obs["context"].shape == (2, 46)
+    assert obs["geometry_id"].shape == (2, 1)
+    torch.testing.assert_close(obs["geometry_id"], obs["context"][:, 45:46])
     assert env.scene["chair"].indexing.free_joint_q_adr.numel() == 7
 
 

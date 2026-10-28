@@ -62,6 +62,20 @@ class ReplayEnvAdapter:
         # RslRlVecEnvWrapper merges term/trunc; retrieve the separate native flags
         # from the same underlying env after its step.
         self.wrapped_env.step(action)
+        # Warp keeps overflow flags across substeps until reset. Reject truncated
+        # physics before recording it or resetting an episode (which clears flags).
+        overflow = self.env.sim.data.overflow
+        if bool(overflow.any()):
+            from mujoco_warp._src.types import OverflowType
+            bits = 0
+            for value in overflow.unique().tolist():
+                bits |= value
+            names = [flag.name for flag in OverflowType if bits & int(flag)]
+            raise RuntimeError(
+                f"MuJoCo-Warp physics buffer overflow ({','.join(names)}; bits={bits}). "
+                "Increase the affected simulation capacity; reduce num-envs if VRAM is insufficient. "
+                "The transition was not recorded in Replay."
+            )
         s1 = self.dynamics.pack(self.state())
         reward = self.env.reward_buf.clone()
         terminated = self.env.reset_terminated.clone()

@@ -61,7 +61,7 @@ def evaluate(env, runner, record=None):
     finished = torch.zeros(native.num_envs, dtype=torch.bool, device=native.device)
     failed = torch.zeros_like(finished)
     trajectory = {"root_p": [], "root_quat": [], "q": [], "f": [], "alive": []}
-    object_enabled = getattr(command.cfg, "object_enabled", False)
+    object_enabled = "chair" in command.scene.entities
     if object_enabled:
         trajectory.update(object_p=[], object_quat=[])
     while not bool(finished.all()):
@@ -113,7 +113,7 @@ def score_checkpoint(path: Path, args):
         cfg.commands["motion"].object_motion_file = args.object_motion_file
     cfg.commands["motion"].history_length = policy_cfg["history_length"]
     cfg.commands["motion"].goal_frames = policy_cfg["goal_frames"]
-    if hasattr(cfg.commands["motion"], "object_enabled"):
+    if hasattr(cfg.commands["motion"], "object_motion_file"):
         from supermimic.tasks.sitting.assets import select_motion_files
         cfg.scene.num_envs = len(select_motion_files(cfg.commands["motion"]))
     else:

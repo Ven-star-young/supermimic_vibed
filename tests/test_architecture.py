@@ -58,7 +58,7 @@ def test_task_configs_are_independent_and_preserve_control_frequency(asset_path)
 def test_reward_remains_differentiable_through_world_model(cpu_kin, cpu_motion):
     """An analytic reward refactor must preserve SuperMimic's policy gradient path."""
     from supermimic.mdp import MDP
-    from supermimic.rl.models import WorldModel
+    from supermimic.tasks.g1_tracking.models import WorldModel
     from supermimic.assets.g1.g1_constants import default_joint_pos_list
 
     torch.manual_seed(41)
@@ -129,7 +129,7 @@ def test_replay_uses_task_dimensions_and_masks_reset_after_wrap():
 
 
 def test_models_use_supplied_dimensions_and_dynamics():
-    from supermimic.rl.models import Policy, WorldModel
+    from supermimic.tasks.g1_tracking.models import Policy, WorldModel
 
     class SmallDynamics:
         input_dim = 7  # Four state, two action, one context.
@@ -166,7 +166,8 @@ def test_models_use_supplied_dimensions_and_dynamics():
 def test_task_dimensions_and_checkpoint_layout_follow_configuration(cpu_kin, cpu_motion):
     from copy import deepcopy
 
-    from supermimic.rl.models import Policy, TensorDictPolicy
+    from supermimic.tasks.g1_tracking.models import Policy
+    from supermimic.rl.models import TensorDictPolicy
     from supermimic.tasks.g1_tracking.task import build_task
     from supermimic.tasks.g1_tracking.env_cfgs import make_env_cfg
 
@@ -286,7 +287,8 @@ def test_task_is_discovered_by_stock_mjlab_entrypoints_without_motion_data(tmp_p
 
 
 def test_inference_module_uses_supplied_observations_and_preserves_normalizer():
-    from supermimic.rl.models import Policy, TensorDictPolicy
+    from supermimic.tasks.g1_tracking.models import Policy
+    from supermimic.rl.models import TensorDictPolicy
 
     torch.manual_seed(23)
     policy = Policy(obs_dim=5, goal_dim=7, hist=2, action_dim=2)

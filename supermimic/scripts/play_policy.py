@@ -1,191 +1,347 @@
-"""Run a checkpoint from random reference states in a live viewer or an MP4.
+"""Run a frozen chair policy in local physics, from a chosen reference.
 
-python -m supermimic.scripts.play_policy --checkpoint-file model_2000.pt
+Examples (run from repository root):
+  uv run python -m supermimic.scripts.play_policy --checkpoint logs/sitting/model_2000.pt --list
+  uv run python -m supermimic.scripts.play_policy --checkpoint logs/sitting/model_2000.pt --index 0 --init clean
+  uv run python -m supermimic.scripts.play_policy --checkpoint logs/sitting/model_2000.pt --index 0 --init perturbed --episodes 5
+  uv run python -m supermimic.scripts.play_policy --checkpoint logs/sitting/model_2000.pt --reference /path/to/clip.npz
+  uv run python -m supermimic.scripts.play_policy --checkpoint logs/sitting/model_2000.pt --viewer none --episodes 3 --output result.json
+
+Clean starts at the reference pose AND velocity. Perturbed starts add bounded
+robot state noise, while keeping reference, chair physics and sensors fixed.
+This is simulated policy deployment; it sends no commands to robot hardware.
 """
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
+from dataclasses import dataclass, fields, replace
+import gc
+import hashlib
 import json
+import math
 import os
 from pathlib import Path
-import shutil
-import subprocess
+
+import torch
+
+from motion_data import load_motion
+from motion_data.chair_split import file_digest, load_split, shape_key
+from motion_data.collision import DEFAULT_CACHE_DIR, load_collision_parts
+from motion_data.reference_training import load_reference_source
+from supermimic.tasks.sitting.experiment import scene_cfg
+from supermimic.rl.runner import SuperMimicRunner
+from supermimic.rotations import mat_to_quat, so3_exp
+from supermimic.tasks.sitting.commands import SittingCommand, SittingCommandCfg
+from mjlab.envs import ManagerBasedRlEnv
+from mjlab.rl import RslRlVecEnvWrapper
+
+def experiment_metadata(checkpoint):
+    return (checkpoint.get("infos") or {}).get("sitting_experiment", {})
 
 
-class LivePolicyEnv:
-    """Adapt manual episode resets to mjlab's interactive viewer loop."""
+def policy_digest(policy):
+    digest = hashlib.sha256()
+    for name, tensor in policy.state_dict().items():
+        digest.update(name.encode())
+        digest.update(tensor.detach().cpu().contiguous().numpy().tobytes())
+    return digest.hexdigest()
 
-    def __init__(self, env, reset_reference):
-        self.unwrapped, self.cfg = env, env.cfg
-        self.num_envs, self.device = env.num_envs, env.device
-        self.reset_reference = reset_reference
-        self.reset()
 
-    def get_observations(self):
-        return self.unwrapped.get_observations()
+def load_actor(runner, checkpoint, manifest):
+    """Load frozen policy semantics while retaining the new scene's geometry IDs."""
+    runner.task.validate_checkpoint(checkpoint)
+    if experiment_metadata(checkpoint).get("split_fingerprint") != manifest["fingerprint"]:
+        raise ValueError("Checkpoint and training split fingerprints differ")
+    exposure = set(experiment_metadata(checkpoint).get("visited_train_shapes", []))
+    if not exposure <= {group["shape_key"] for group in manifest["train"]}:
+        raise ValueError("Checkpoint exposure includes a non-training chair")
+    for key in ("history_length", "goal_frames"):
+        if checkpoint["policy_config"][key] != runner.policy_config[key]:
+            raise ValueError(f"Incompatible policy {key}")
+    encoder = {key: value for key, value in checkpoint["pi"].items()
+               if key.startswith("geometry_encoder.")}
+    if not encoder or any(key not in checkpoint["wm"] or not torch.equal(value, checkpoint["wm"][key])
+                          for key, value in encoder.items()):
+        raise ValueError("Checkpoint has inconsistent shared geometry encoder weights")
+    # Geometry-bank indices are scene metadata, never trained embeddings. The
+    # held-out cloud is evaluated through the trained shared PointNet weights.
+    runner.pi.load_state_dict(checkpoint["pi"], strict=True)
+    runner.pi.eval().requires_grad_(False)
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--checkpoint", "--checkpoint-file", type=Path, required=True)
+    parser.add_argument("--split", type=Path, help="Training manifest; defaults to checkpoint's sibling split.json")
+    parser.add_argument("--data-root", type=Path, help="Relocate the NPZ data without changing the split")
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument("--reference", type=Path, help="One NPZ path, or a filename relative to data-root")
+    source.add_argument("--references", type=Path, help="Your reference choices JSON or exported manifest.json")
+    parser.add_argument("--selection", type=Path, help="Initial keep/reject JSON for relocated reference choices")
+    parser.add_argument("--partition", choices=("train", "test", "all"), default="train")
+    parser.add_argument("--index", type=int, default=0, help="Index in the list printed by --list")
+    parser.add_argument("--list", action="store_true", help="List references and exit without creating physics")
+    parser.add_argument("--all", action="store_true", help="Run all listed references sequentially (headless only)")
+    parser.add_argument("--init", dest="init_mode", choices=("clean", "perturbed"), default="clean")
+    parser.add_argument("--noise-scale", type=float, default=1., help="Multiply bounded robot initialization noise")
+    phase = parser.add_mutually_exclusive_group()
+    phase.add_argument("--start-frame", type=int, default=0, help="Frame on the resampled 50 Hz reference clock")
+    phase.add_argument("--random-start", action="store_true", help="Randomize reference phase separately from state noise")
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--episodes", type=int, default=1, help="Episodes per reference; 0 repeats until viewer closes")
+    parser.add_argument("--max-steps", type=int, help="Optional per-episode cutoff, reported separately from completion")
+    parser.add_argument("--viewer", choices=("native", "viser", "none"), default="native")
+    parser.add_argument("--port", type=int, default=8087, help="Viser port on localhost")
+    parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--cache-dir", type=Path, default=DEFAULT_CACHE_DIR)
+    parser.add_argument("--output", type=Path, help="Write initialization, episode scores and frozen-policy verification")
+    return parser
+
+
+def resolve_references(args, manifest, root):
+    root = Path(root)
+    if args.reference:
+        path = args.reference.expanduser()
+        paths = [path.resolve() if path.is_file() else (root / path).resolve()]
+    elif args.references:
+        source, groups, _ = load_reference_source(args.references, args.data_root, selection_path=args.selection)
+        paths = [source / clip["path"] for group in groups for clip in group["clips"]]
+    else:
+        partitions = ("train", "test") if args.partition == "all" else (args.partition,)
+        paths = [root / clip["path"] for part in partitions for group in manifest[part] for clip in group["clips"]]
+    known = {c["path"]: c["sha256"] for part in ("train", "test") for g in manifest[part] for c in g["clips"]}
+    for path in paths:
+        if not path.is_file():
+            raise FileNotFoundError(f"Reference does not exist: {path}")
+        if path.name in known and file_digest(path) != known[path.name]:
+            raise ValueError(f"Reference hash changed from the training manifest: {path}")
+    return sorted(set(paths), key=lambda p: str(p))
+
+
+@dataclass(kw_only=True)
+class DeploymentCommandCfg(SittingCommandCfg):
+    init_mode: str = "clean"
+    noise_scale: float = 1.
+    start_frame: int = 0
+    random_start: bool = False
+
+    def build(self, env):
+        return DeploymentCommand(self, env)
+
+
+class DeploymentCommand(SittingCommand):
+    def _resample_command(self, env_ids):
+        # Exactly one clip is loaded into this physical scene. Keep phase
+        # selection independent of the choice to perturb the robot's state.
+        if self.cfg.random_start:
+            frames = torch.randint(0, int(self.motion.clip_len[0]) - 1, (len(env_ids),), device=self.device)
+        else:
+            if not 0 <= self.cfg.start_frame < int(self.motion.clip_len[0]) - 1:
+                raise ValueError("start-frame must leave at least one reference transition")
+            frames = torch.full_like(env_ids, self.cfg.start_frame)
+        self.set_reset_frames(env_ids, frames)
+        super()._resample_command(env_ids)
+
+    def reset_reference(self, env_ids):
+        super().reset_reference(env_ids)
+        if self.cfg.init_mode == "clean" or self.cfg.noise_scale == 0:
+            return
+        # Apply before the observation manager fills history. play=True remains
+        # in force: no mass/friction randomization or observation/action noise.
+        p, R, v, w, q, qd = (x.clone() for x in self.motion.ref_state(self.time_steps[env_ids]))
+        noise = self.cfg.reset_cfg
+
+        def perturb(value, bounds):
+            return value + (2 * torch.rand_like(value) - 1) * value.new_tensor(bounds) * self.cfg.noise_scale
+
+        p = perturb(p, noise.position)
+        R = so3_exp(perturb(torch.zeros_like(p), noise.rotation)) @ R
+        v, w = perturb(v, noise.linear_velocity), perturb(w, noise.angular_velocity)
+        q = perturb(q, noise.joint_position).clamp(self.mdp.kin.q_lo, self.mdp.kin.q_hi)
+        self.robot.write_root_link_pose_to_sim(torch.cat((p + self.scene.env_origins[env_ids], mat_to_quat(R)), -1), env_ids)
+        self.robot.write_root_link_velocity_to_sim(torch.cat((v, w), -1), env_ids)
+        self.robot.write_joint_state_to_sim(q, qd, joint_ids=self.joint_ids, env_ids=env_ids)
+        self.robot.set_joint_position_target(q, joint_ids=self.joint_ids, env_ids=env_ids)
+
+
+def make_deployment_cfg(checkpoint, reference, args):
+    reference = Path(reference).resolve()
+    task = checkpoint["task"]
+    scene = {"clips": [{"path": reference.name}]}
+    cfg = scene_cfg(reference.parent, scene, cache_dir=args.cache_dir, num_envs=1,
+                    play=True, seed=args.seed, collision_profile=experiment_metadata(checkpoint).get("collision_profile", "default"))
+    original = cfg.commands["motion"]
+    command = DeploymentCommandCfg(**{f.name: getattr(original, f.name) for f in fields(original)},
+        init_mode=args.init_mode, noise_scale=args.noise_scale,
+        start_frame=args.start_frame, random_start=args.random_start)
+    command.history_length = checkpoint["policy_config"]["history_length"]
+    command.goal_frames = checkpoint["policy_config"]["goal_frames"]
+    for field, key in (("object_reward_cfg", "object_reward"), ("reward_cfg", "robot_reward"),
+                       ("observation_cfg", "observation"), ("termination_cfg", "termination")):
+        if key in task:
+            setattr(command, field, replace(getattr(command, field), **task[key]))
+    if "control_dt" in task and not math.isclose(task["control_dt"], cfg.decimation * cfg.sim.mujoco.timestep):
+        raise ValueError("Checkpoint control timestep differs from this sitting environment")
+    return replace(cfg, commands={"motion": command})
+
+
+class DeploymentEnv(RslRlVecEnvWrapper):
+    """One episode at a time; retain terminal state until metrics are captured."""
+    def __init__(self, native, episodes=1, max_steps=None):
+        self.records, self.finished = [], False
+        self.episodes, self.max_steps = episodes, max_steps
+        self.steps, self.total_reward, self.initial = 0, 0., None
+        self._last_result = None
+        super().__init__(native)
+        self._remember_start()
+
+    def _remember_start(self):
+        command = self.unwrapped.command_manager.get_term("motion")
+        self.steps, self.total_reward = 0, 0.
+        self.frame0 = int(command.time_steps[0])
+        self.initial = dict(frame=self.frame0, state=command.dynamics.pack(command.state())[0].cpu().tolist())
 
     def reset(self):
-        obs, row, _ = self.reset_reference()
-        print("RESET " + json.dumps(row), flush=True)
-        return obs, {}
+        result = super().reset()
+        self.finished = False
+        self._remember_start()
+        return result
 
     def step(self, actions):
-        obs, reward, terminated, truncated, info = self.unwrapped.step(actions)
-        if bool((terminated | truncated).any()):
-            manager = self.unwrapped.termination_manager
-            reasons = [name for name in manager.active_terms if bool(manager.get_term(name)[0])]
-            print("END " + ", ".join(reasons), flush=True)
-            obs, _ = self.reset()
-        return obs, reward, terminated, truncated, info
+        if self.finished:
+            return self._last_result
+        result = super().step(actions)
+        self._last_result = result
+        native = self.unwrapped
+        if bool(native.sim.data.overflow.any()):
+            raise RuntimeError("Physics buffer overflow; this rollout is invalid")
+        command = native.command_manager.get_term("motion")
+        if not bool(torch.isfinite(command.dynamics.pack(command.state())).all()):
+            raise FloatingPointError("Nonfinite physical state")
+        self.steps += 1
+        self.total_reward += float(result[1][0])
+        done = bool(result[2][0])
+        if done or (self.max_steps is not None and self.steps >= self.max_steps):
+            failed = bool(native.reset_terminated[0])
+            completed = not failed and int(command.time_steps[0]) >= int(command.motion.clip_end[0])
+            remaining = int(command.motion.clip_end[0]) - self.frame0
+            record = dict(episode=len(self.records) + 1, initial=self.initial, steps=self.steps,
+                seconds=self.steps * native.step_dt,
+                outcome="tracking_failure" if failed else "reference_complete" if completed else "step_limit",
+                normalized_return=self.total_reward / (remaining * command.task.max_step_reward),
+                mean_step_reward=self.total_reward / (self.steps * command.task.max_step_reward))
+            self.records.append(record)
+            print("[deploy] " + json.dumps({k: v for k, v in record.items() if k != "initial"}), flush=True)
+            self.finished = self.episodes > 0 and len(self.records) >= self.episodes
+            if not self.finished:
+                observation, _ = self.reset()
+                result = (observation, *result[1:])
+        return result
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--checkpoint-file", type=Path, required=True)
-    parser.add_argument("--task", default="Mjlab-SuperMimic-Sitting-Unitree-G1")
-    parser.add_argument("--motion-dir", type=Path)
-    parser.add_argument("--object-motion-file")
-    parser.add_argument("--device", default="cuda:0")
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--episodes", type=int, default=8, help="Number of episodes when recording video")
-    parser.add_argument("--start", choices=("random", "first"), default="random")
-    parser.add_argument("--training-conditions", action="store_true",
-                        help="Enable training domain randomization, reset and observation noise")
-    parser.add_argument("--viewer", choices=("native", "viser"), default="native")
-    parser.add_argument("--video", type=Path, help="Record to MP4 instead of opening the live viewer")
-    args = parser.parse_args()
-    if args.episodes < 1:
-        parser.error("--episodes must be positive")
-    if args.video:
-        if not shutil.which("ffmpeg"):
-            parser.error("ffmpeg is required to record video")
-        os.environ.setdefault("MUJOCO_GL", "egl")
-
-    import numpy as np
-    import torch
-    from mjlab.envs import ManagerBasedRlEnv
-    from mjlab.rl import RslRlVecEnvWrapper
-    from mjlab.tasks.registry import load_env_cfg, load_rl_cfg, load_runner_cls
-    import supermimic.tasks  # noqa: F401 -- register tasks
-
-    checkpoint = torch.load(args.checkpoint_file, map_location="cpu", weights_only=True)
-    policy_cfg = checkpoint["policy_config"]
-    report = dict(checkpoint=str(args.checkpoint_file.resolve()), iteration=checkpoint.get("iteration"),
-                  task=args.task, seed=args.seed, start=args.start,
-                  training_conditions=args.training_conditions, episodes=[])
-    del checkpoint
-    cfg = load_env_cfg(args.task, play=not args.training_conditions)
-    cfg.scene.num_envs, cfg.seed, cfg.auto_reset = 1, args.seed, False
-    command_cfg = cfg.commands["motion"]
-    command_cfg.history_length = policy_cfg["history_length"]
-    command_cfg.goal_frames = policy_cfg["goal_frames"]
-    if args.motion_dir:
-        command_cfg.motion_dir = str(args.motion_dir)
-    if args.object_motion_file:
-        if not hasattr(command_cfg, "object_motion_file"):
-            parser.error("--object-motion-file requires an object task")
-        command_cfg.object_motion_file = args.object_motion_file
-    command_cfg.debug_vis = False
-    cfg.viewer.width, cfg.viewer.height = 960, 720
-    cfg.viewer.distance, cfg.viewer.elevation, cfg.viewer.azimuth = 3.3, -18, 135
-    cfg.viewer.max_extra_envs = 0
-    env = ManagerBasedRlEnv(cfg, device=args.device, render_mode="rgb_array" if args.video else None)
-    encoder = None
+def run_reference(checkpoint, manifest, reference, args):
+    clip = load_motion(reference)
+    collision_profile = experiment_metadata(checkpoint).get("collision_profile", "default")
+    # Validate the same approximation that will be used by physics and the
+    # geometry encoder, before allocating CUDA. Compact bundles need no default cache.
+    load_collision_parts(clip, args.cache_dir, profile=collision_profile)
+    key = shape_key(clip)
+    partitions = [p for p in ("train", "test") if key in {g["shape_key"] for g in manifest[p]}]
+    digest = file_digest(reference)
+    reference_partitions = [p for p in ("train", "test") if digest in {
+        c["sha256"] for g in manifest[p] for c in g["clips"]}]
+    exposure = experiment_metadata(checkpoint).get("visited_train_shapes", [])
+    identity = dict(reference=str(reference), sha256=digest, shape_key=key,
+                    collision_profile=collision_profile,
+                    geometry_partition=partitions[0] if partitions else "external",
+                    reference_partition=reference_partitions[0] if reference_partitions else "external",
+                    visited_in_checkpoint=key in exposure)
+    print("[deploy] " + json.dumps(identity), flush=True)
+    native = ManagerBasedRlEnv(make_deployment_cfg(checkpoint, reference, args), device=args.device)
     try:
-        wrapped = RslRlVecEnvWrapper(env)
-        runner = load_runner_cls(args.task)(wrapped, asdict(load_rl_cfg(args.task)), device=args.device)
-        runner.load(str(args.checkpoint_file), load_cfg={"actor": True})
-        policy = runner.get_inference_policy(device=args.device)
-        command = env.command_manager.get_term("motion")
-        motion = command.motion
-        ids = torch.arange(1, device=args.device)
-        rng = np.random.default_rng(args.seed)
-
-        def reset_reference():
-            clip = int(rng.integers(len(motion.names)))
-            begin, end = int(motion.clip_start[clip]), int(motion.clip_end[clip])
-            start = int(rng.integers(begin, end)) if args.start == "random" else begin
-            command.set_reset_frames(ids, torch.tensor([start], device=args.device))
-            obs, _ = env.reset()
-            row = dict(clip=motion.names[clip], start_frame=start - begin,
-                       clip_frames=end - begin + 1, steps=0, reward_sum=0.0)
-            if getattr(command.cfg, "object_enabled", False):
-                row.update(chair_mass=float(command.xi[0, 33]),
-                           robot_chair_friction=float(command.xi[0, 43]))
-            return obs, row, clip
-
-        if not args.video:
+        env = DeploymentEnv(native, args.episodes, args.max_steps)
+        train_cfg = checkpoint["train_cfg"] | dict(amp="none", no_compile=True)
+        runner = SuperMimicRunner(env, train_cfg, device=args.device)
+        # Explicit frozen-policy transfer, including a new chair's local geometry
+        # bank. Full training resume would incorrectly require identical scene IDs.
+        load_actor(runner, checkpoint, manifest)
+        before = policy_digest(runner.pi)
+        policy = runner.get_inference_policy()
+        if args.viewer == "none":
+            with torch.inference_mode():
+                while not env.finished:
+                    env.step(policy(env.get_observations()))
+        else:
             from mjlab.viewer import NativeMujocoViewer, ViserPlayViewer
+            viewer_type = NativeMujocoViewer if args.viewer == "native" else ViserPlayViewer
 
-            viewer_cls = NativeMujocoViewer if args.viewer == "native" else ViserPlayViewer
-            print(f"Live policy iteration {report['iteration']} | {args.start} reference resets", flush=True)
-            with torch.no_grad():
-                viewer_cls(LivePolicyEnv(env, reset_reference), policy).run()
-            return
+            class EpisodeViewer(viewer_type):
+                def is_running(self):
+                    return not env.finished and super().is_running()
 
-        from PIL import Image, ImageDraw, ImageFont
-
-        args.video.parent.mkdir(parents=True, exist_ok=True)
-        fps = round(1 / env.step_dt)
-        report.update(control_dt=env.step_dt, clips=list(motion.names), policy_config=policy_cfg,
-                      video=str(args.video.resolve()), terminal_hold_seconds=0.5)
-        encoder = subprocess.Popen([
-            "ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
-            "-s", "960x720", "-r", str(fps), "-i", "-", "-an", "-c:v", "libx264",
-            "-crf", "20", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(args.video),
-        ], stdin=subprocess.PIPE)
-        font = ImageFont.load_default(size=19)
-
-        def render(lines, copies=1):
-            image = Image.fromarray(env.render())
-            draw = ImageDraw.Draw(image)
-            draw.rectangle((0, 0, 960, 28 * len(lines) + 12), fill=(20, 24, 30))
-            draw.multiline_text((12, 6), "\n".join(lines), font=font, fill="white", spacing=8)
-            pixels = image.tobytes()
-            for _ in range(copies):
-                encoder.stdin.write(pixels)
-
-        with torch.inference_mode():
-            for episode in range(args.episodes):
-                obs, row, clip = reset_reference()
-                row["episode"] = episode + 1
-                label = [f"Policy iteration {report['iteration']} | episode {episode + 1}/{args.episodes}",
-                         f"Clip {clip} | {args.start} start {row['start_frame']}/{row['clip_frames'] - 1}"]
-                render(label + ["RESET to reference state; subsequent motion uses policy + physics"])
-                while True:
-                    action = policy(obs)
-                    if not bool(torch.isfinite(action).all()):
-                        raise RuntimeError("Policy produced non-finite actions")
-                    obs, reward, terminated, truncated, _ = env.step(action)
-                    row["steps"] += 1
-                    row["reward_sum"] += float(reward[0])
-                    done = bool(terminated[0] | truncated[0])
-                    if done:
-                        row["terminated"] = bool(terminated[0])
-                        row["truncated"] = bool(truncated[0])
-                        row["end_reasons"] = [name for name in env.termination_manager.active_terms
-                                              if bool(env.termination_manager.get_term(name)[0])]
-                    status = " + ".join(row["end_reasons"]) + " (terminal frame held)" if done else "RUNNING"
-                    render(label + [f"t={row['steps'] * env.step_dt:.2f}s | {status}"],
-                           copies=max(1, fps // 2) if done else 1)
-                    if done:
-                        break
-                row["duration_s"] = row["steps"] * env.step_dt
-                row["mean_reward"] = row["reward_sum"] / row["steps"]
-                report["episodes"].append(row)
-                print(json.dumps(row), flush=True)
-        encoder.stdin.close()
-        if encoder.wait() != 0:
-            raise RuntimeError("ffmpeg failed")
-        encoder = None
-        args.video.with_suffix(".json").write_text(json.dumps(report, indent=2) + "\n")
-        print(f"Video: {args.video.resolve()}", flush=True)
+            server = None
+            try:
+                if args.viewer == "viser":
+                    import viser
+                    server = viser.ViserServer(host="127.0.0.1", port=args.port, label="G1 policy deployment")
+                viewer = EpisodeViewer(env, policy, **({"viser_server": server} if server else {}))
+                if args.viewer == "viser":
+                    # mjviser measures elevation above the horizon; the native
+                    # MuJoCo default is negative and would start below the floor.
+                    viewer.cfg = replace(viewer.cfg, elevation=20., azimuth=120., distance=2.8)
+                viewer.run()
+                if viewer._last_error:
+                    raise RuntimeError(viewer._last_error)
+            finally:
+                if server is not None:
+                    server.stop()
+        if policy_digest(runner.pi) != before:
+            raise RuntimeError("Policy weights or normalization changed during deployment")
+        assert runner.wm is runner.critic is runner.buffer is None
+        return dict(**identity, frozen_policy=True, episodes=env.records)
     finally:
-        if encoder is not None:
-            encoder.stdin.close()
-            encoder.wait()
-        env.close()
+        native.close()
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    if not 1 <= args.port <= 65535:
+        raise ValueError("Invalid viewer port")
+    if (args.index < 0 or args.episodes < 0 or args.start_frame < 0
+            or not math.isfinite(args.noise_scale) or args.noise_scale < 0
+            or (args.max_steps is not None and args.max_steps < 1)):
+        raise ValueError("Invalid index, episode count, frame, noise scale or step limit")
+    if args.viewer == "none" and args.episodes == 0:
+        raise ValueError("Headless runs require a finite --episodes count")
+    if args.all and args.viewer != "none":
+        raise ValueError("--all requires --viewer none; use --index to view one reference")
+    if int(os.environ.get("WORLD_SIZE", "1")) != 1:
+        raise ValueError("Deployment uses one process; do not launch with torchrun")
+    manifest, root = load_split(args.split or args.checkpoint.parent / "split.json", args.data_root)
+    paths = resolve_references(args, manifest, root)
+    if args.list:
+        for i, path in enumerate(paths):
+            print(f"{i:3d}  {path.name}")
+        return
+    if not paths or args.index >= len(paths):
+        raise ValueError(f"Reference index {args.index} out of range (found {len(paths)})")
+    # Full checkpoint stays on CPU; only the Actor is allocated on the GPU.
+    checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
+    if experiment_metadata(checkpoint).get("split_fingerprint") != manifest["fingerprint"]:
+        raise ValueError("Checkpoint and training split fingerprints differ")
+    report = dict(checkpoint=str(args.checkpoint.resolve()), checkpoint_sha256=file_digest(args.checkpoint),
+                  iteration=checkpoint["iteration"], init_mode=args.init_mode, noise_scale=args.noise_scale,
+                  seed=args.seed, random_start=args.random_start, start_frame=args.start_frame, references=[])
+    print(f"[deploy] checkpoint iteration={checkpoint['iteration']}, init={args.init_mode}, seed={args.seed}", flush=True)
+    for reference in paths if args.all else [paths[args.index]]:
+        report["references"].append(run_reference(checkpoint, manifest, reference, args))
+        gc.collect()
+        if args.device.startswith("cuda"):
+            torch.cuda.empty_cache()
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(json.dumps(report, indent=2) + "\n")
+    return report
 
 
 if __name__ == "__main__":

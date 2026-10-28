@@ -162,7 +162,7 @@ def test_play_context_has_no_randomization(eval_env):
 
 
 def test_stock_play_auto_reset_refills_only_finished_history(cuda_device, motion_dir):
-    from tools._smoke import native_env, reset_frames
+    from tests.helpers import native_env, reset_frames
     with native_env(2, device=cuda_device, motion_dir=motion_dir, auto_reset=True) as env:
         cmd = env.command_manager.get_term("motion")
         reset_frames(env, torch.tensor([3, 29], device=cuda_device))
