@@ -158,10 +158,14 @@ class SuperMimicRunner:
             with distributed.local_phase(self.device, "physics step"):
                 out = env.step(action)
             self.buffer.add(out)
-            initial, final = self.dynamics.unpack(out["s"]), self.dynamics.unpack(out["s1"])
-            self.wm.update_normalizers(initial, out["a"], out["xi"], final)
+            valid = out["valid"]
+            initial = self.dynamics.unpack(out["s"][valid])
+            final = self.dynamics.unpack(out["s1"][valid])
+            # Empty ranks still participate in global normalizer reductions.
+            self.wm.update_normalizers(initial, out["a"][valid], out["xi"][valid], final)
             self.sim_steps += env.N * distributed.world_size()
             stats["sim_rew"].append(out["r"].mean() / self.task.max_step_reward)
+            stats["sim_invalid"].append((~valid).float().mean())
             if "ep_len" in out:
                 stats["ep_len"].append(out["ep_len"].mean())
                 stats["ep_ret_norm"].append(out["ep_ret_norm"].mean())
@@ -188,7 +192,7 @@ class SuperMimicRunner:
         for _ in range(128):
             start, history = self.buffer.sample_starts(2 * batch, self.history_length)
             frame = start["f"]
-            valid = frame + self.cfg.horizon <= self.motion.clip_end[self.motion.clip_id[frame]]
+            valid = start["valid"] & (frame + self.cfg.horizon <= self.motion.clip_end[self.motion.clip_id[frame]])
             indices = valid.nonzero(as_tuple=False).flatten()[:batch - count]
             starts.append({key: value[indices] for key, value in start.items()})
             histories.append({key: value[indices] for key, value in history.items()})
@@ -290,7 +294,7 @@ class SuperMimicRunner:
     @staticmethod
     def _new_stats():
         names = ("wm_loss", "wm_err8", "pi_loss", "v_loss", "imag_rew", "pi_gradnorm", "imag_survival",
-                 "sim_rew", "ep_len", "ep_ret_norm", "terminated", "done")
+                 "sim_rew", "sim_invalid", "ep_len", "ep_ret_norm", "terminated", "done")
         return {name: [] for name in names}
 
     def learn(self, num_learning_iterations, init_at_random_ep_len=False):
@@ -507,4 +511,5 @@ class SuperMimicRunner:
         print(f"it {self.current_learning_iteration} | {row['wall_h']:.3f} h | wm {row['wm_loss']:.4f} "
               f"e8 {row['wm_err8']:.4f} | pi {row['pi_loss']:.3f} v {row['v_loss']:.4f} "
               f"imag_r {row['imag_rew']:.3f} surv {row['imag_survival']:.3f} | sim_r {row['sim_rew']:.3f} "
+              f"invalid {row['sim_invalid']:.4%} "
               f"ep_len {row['ep_len']:.1f} ep_ret {row['ep_ret_norm']:.3f} | {rate:.2f} it/s", flush=True)

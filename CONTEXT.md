@@ -129,6 +129,12 @@ broadcast; normalizer statistics use global samples. Buffers/batches/environment
 are per rank, logged sim_steps are global. Only rank0 writes models/logs. Rank-local
 physics errors are synchronized before entering the next learning collective.
 
+Numerically divergent worlds (nonfinite state/reward or state/acceleration exceeding
+MuJoCo's numerical bound) reset individually. Their transitions carry valid=False:
+finite storage placeholders never enter WM statistics/loss or Actor starting states,
+and windows stop at the failed step. Normal physical terminal transitions remain valid.
+CSV/TensorBoard sim_invalid reports the failed fraction of collected transitions.
+
 ## Checkpoints and retained tests/tools
 
 Sitting schema4 identifies model/coordinate/reward semantics, independently of scene ID.

@@ -3,6 +3,7 @@
 The adapter never constructs or replaces a simulator. Training disables native
 auto-reset so terminal next states can be recorded before resetting finished worlds.
 """
+import mujoco
 import torch
 from mjlab.envs import ManagerBasedRlEnv
 
@@ -56,6 +57,8 @@ class ReplayEnvAdapter:
 
     def step(self, action):
         s = self.dynamics.pack(self.state())
+        if not bool(torch.isfinite(s).all() & torch.isfinite(action).all()):
+            raise FloatingPointError("Nonfinite initial state or policy action before physics step")
         f, xi = self.f.clone(), self.xi.clone()
         previous, ep_step = self.a_prev.clone(), self.ep_step.clone()
         # Calling the existing wrapped chain preserves native VideoRecorder behavior.
@@ -79,9 +82,21 @@ class ReplayEnvAdapter:
         s1 = self.dynamics.pack(self.state())
         reward = self.env.reward_buf.clone()
         terminated = self.env.reset_terminated.clone()
+        # Warp does not automatically reset numerically divergent worlds. NaN
+        # comparisons in task terminations can also leave these worlds alive.
+        # Use MuJoCo's numerical bound, not a task/contact termination threshold.
+        valid = ((s1.abs() < mujoco.mjMAXVAL).all(-1)
+                 & (self.env.sim.data.qacc.abs() < mujoco.mjMAXVAL).all(-1)
+                 & torch.isfinite(reward))
+        invalid = ~valid
+        # Finite placeholders keep batched storage safe. These transitions are
+        # excluded from WM fitting/normalization and policy starting states.
+        s1[invalid] = s[invalid]
+        reward[invalid] = 0
+        terminated |= invalid
         done = terminated | self.env.reset_time_outs.clone()
         out = dict(s=s, s1=s1, a=action.clone(), a_prev=previous, f=f, xi=xi,
-                   r=reward, term=terminated, done=done, ep_step=ep_step)
+                   r=reward, term=terminated, done=done, ep_step=ep_step, valid=valid)
         self.ep_disc_ret += self.gamma ** ep_step.float() * reward
         self.ep_ret += reward
         ids = done.nonzero().flatten()

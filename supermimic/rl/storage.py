@@ -16,6 +16,7 @@ def replay_fields(state_dim: int, action_dim: int, context_dim: int) -> dict:
         "f": ((), torch.long),
         "ep_step": ((), torch.int32),
         "done": ((), torch.bool),
+        "valid": ((), torch.bool),
     }
 
 
@@ -32,7 +33,8 @@ class ReplayBuffer:
 
     def add(self, tr: dict):
         for k in self.fields:
-            self.data[k][self.ptr] = tr[k]
+            # Ordinary legacy transition producers have no numerical failures.
+            self.data[k][self.ptr] = tr.get(k, True) if k == "valid" else tr[k]
         self.ptr = (self.ptr + 1) % self.T
         self.size = min(self.size + 1, self.T)
 
@@ -47,11 +49,11 @@ class ReplayBuffer:
         ages = t0.unsqueeze(-1) + torch.arange(k, device=self.device)
         rows = self._row(ages)
         e = env.unsqueeze(-1).expand_as(rows)
-        out = {key: self.data[key][rows, e] for key in ("s", "s1", "a", "xi", "done")}
-        # transition j is valid if no episode ended at transitions 0..j-1
-        d = out["done"].float()
+        out = {key: self.data[key][rows, e] for key in ("s", "s1", "a", "xi", "done", "valid")}
+        # A reset or invalid transition breaks the autoregressive target chain.
+        d = (out["done"] | ~out["valid"]).float()
         mask = torch.cumprod(torch.cat((torch.ones(B, 1, device=self.device), 1 - d[:, :-1]), -1), -1)
-        out["mask"] = mask
+        out["mask"] = mask * out["valid"]
         return out
 
     def sample_starts(self, B: int, hist: int):
@@ -65,6 +67,6 @@ class ReplayBuffer:
         back = torch.minimum(back, age.unsqueeze(-1))  # stay inside the buffer
         hrows = self._row(age.unsqueeze(-1) - back)
         henv = env.unsqueeze(-1).expand_as(hrows)
-        start = {k: self.data[k][row, env] for k in ("s", "a_prev", "xi", "f")}
+        start = {k: self.data[k][row, env] for k in ("s", "a_prev", "xi", "f", "valid")}
         hist_d = {k: self.data[k][hrows, henv] for k in ("s", "a_prev", "xi", "f")}
         return start, hist_d

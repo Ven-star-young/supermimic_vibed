@@ -130,6 +130,26 @@ OpenDoor checkpoint schema升为2，保存采样范围及开关。续训严格�
 若要启用穿透终止，可设 `door_reward_cfg.penetration_limit`；阈值须小于门盒最小半尺寸
 （本门为0.02m），真实和想象都使用该状态边界。MuJoCo接触不会单独改变训练reward/done。
 
+### 仿真数值失败
+
+大规模运行可能遇到个别world速度/加速度爆炸。NaN与高度、角度阈值比较会返回false，
+不能依赖普通任务终止识别它；异常transition进入跨卡归一化会使后续WM梯度报Nonfinite。
+Replay采集现在单独检查后继状态、加速度及奖励：非有限值，或状态/加速度超过MuJoCo的
+`mjMAXVAL=1e10` 数值界限时，仅重置该world。这里不新增穿模筛选或速度任务终止阈值。
+
+异常transition标记 `valid=False`，不进入WM归一化、WM监督或Actor起点；多步监督在该步
+截断。缓冲中的有限占位值没有训练权重；正常摔倒、参考结束等terminal仍保留真实后继状态。
+单卡无有效样本时仍参与跨卡统计，避免另一张卡等待。CSV/TensorBoard的 `sim_invalid`
+和终端 `invalid` 记录异常transition比例，便于区分数值恢复和策略表现。
+若初态或策略动作本身已非有限则明确报错，不跳过坏梯度或继续使用已污染的网络。
+
+本次修复验证：全仓324项测试通过。CUHK GPU1、2，每卡2048环境、WM/Actor batch各512、
+BF16与torch.compile开启，完成520轮（含500轮WM预热和20轮Actor/Critic），成功退出。
+5,586,944条transition中隔离6条数值失败，WM统计样本数恰为5,586,938；所有日志指标、
+三个网络的权重/统计及优化器张量均有限。诊断模型和验证JSON位于服务器
+`logs/diagnostics/wm_fix_validation/runs/supermimic_open_door/2026-10-31_16-52-54_wm_finite_validation/`。
+这验证数值隔离和完整学习链路，不代表长期训练已收敛。
+
 ## 训练、播放、评估
 
 ### 配置文件
