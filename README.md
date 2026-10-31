@@ -100,9 +100,15 @@ CUDA_VISIBLE_DEVICES=0,1 OMP_NUM_THREADS=4 \
 .venv/bin/python -m motion_data.converters.gmr \
   data/motions/open_door data/motions/open_door_prepared
 
-OMP_NUM_THREADS=4 .venv/bin/train Mjlab-SuperMimic-OpenDoor-Unitree-G1 \
-  --gpu-ids '[0]' --env.scene.num-envs 128 --agent.run-name back_tracking
+./run_open_door.sh --check
+CUDA_VISIBLE_DEVICES=1,2 ./run_open_door.sh --config configs/open_door.json
 ```
+
+训练参数统一放在 [`configs/open_door.json`](configs/open_door.json)，按 `training` / `task`
+组织。直接修改 `training.num_envs`、`wm_batch`、`pi_batch`、`iterations`；环境数和batch
+均为每卡数值。奖励、RSI、初始化扰动、终止和门物性随机化在 `task` 中。
+默认每卡1024环境、WM/Actor batch各512；`training.log_root` 为 `logs/rsl_rl`。
+`--check` 只解析并打印最终配置，不启动仿真；运行时仍使用原生mjlab入口和现有Runner。
 
 每帧未来目标为机器人73＋门角/角速度2，共75维；没有几何编码器。
 真实与想象使用同一个state-based reward，MuJoCo接触只用于评估。

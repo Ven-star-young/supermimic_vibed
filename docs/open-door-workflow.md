@@ -84,13 +84,13 @@ Actor没有特权物性；没有PointNet、learned geometry、额外task memory�
 由现有Replay交给WM/Critic；Actor不直接读取这些物性。各GPU使用独立随机种子。
 弹簧零位仍为−0.1 rad，门尺寸仍为0.55×1.8×0.04 m。机器人原有随机化保持不变。
 
-范围配置为 `env.commands.motion.door_randomization_cfg`；设置其中的 `enabled=False`
+范围配置在 `configs/open_door.json` 的 `task.door_randomization_cfg`；设置其中的 `enabled=false`
 可禁用门随机化，使用已有的 `door_mass`、`door_damping` 等名义参数。
 `play=True`始终使用名义参数，保留训练分布配置供checkpoint校验。
 例如只修改质量范围或关闭门随机化：
 
 ```bash
-./run_open_door.sh --env.commands.motion.door-randomization-cfg.mass 6 12
+./run_open_door.sh --env.commands.motion.door-randomization-cfg.mass '(6, 12)'
 ./run_open_door.sh --env.commands.motion.door-randomization-cfg.enabled False
 ```
 
@@ -132,6 +132,49 @@ OpenDoor checkpoint schema升为2，保存采样范围及开关。续训严格�
 
 ## 训练、播放、评估
 
+### 配置文件
+
+日常修改入口为 [`configs/open_door.json`](../configs/open_door.json)，与独立 `open_door`
+项目一样按 `training` / `task` 分组。JSON覆盖Python默认值，仍调用原生mjlab的
+`launch_training` 和现有SuperMimicRunner，不增加训练循环。
+
+| 想修改的内容 | JSON位置 |
+|---|---|
+| 每卡环境数、WM/Actor batch | `training.num_envs`、`wm_batch`、`pi_batch` |
+| 迭代数、预热、Replay、想象长度 | `training.iterations`、`wm_only_iters`、`buffer_steps`、`horizon` |
+| 学习率、折扣、保存频率 | `training.lr`、`gamma`、`save_interval` |
+| 日志和模型位置、实验名 | `training.log_root`、`run_name` |
+| 轨迹目录、episode时限 | `task.motion_dir`、`episode_length_s` |
+| RSI采样方式及混合权重 | `task.sampling_mode`、`uniform_weight`、`current_weight`、`history_weight` |
+| 初始化扰动、观测噪声 | `task.reset_noise`、`reset_cfg`、`observation_cfg` |
+| 机器人跟踪奖励、门奖励 | `task.reward_cfg`、`door_reward_cfg` |
+| 机器人终止、可选穿透终止 | `task.termination_cfg`、`door_reward_cfg.penetration_limit` |
+| 门质量、阻尼、摩擦、弹簧随机化 | `task.door_randomization_cfg` |
+| 机器人摩擦、COM及关节标定随机化 | `task.physical_cfg` |
+
+例如将 `training.num_envs` 改为1536、保持 `wm_batch=512`、`pi_batch=512`，
+两卡合计3072环境；训练batch不会随环境数自动增加。
+`training.gpu_ids="all"` 使用所有可见GPU；物理卡号由 `CUDA_VISIBLE_DEVICES` 选择。
+列表形式的 `gpu_ids` 使用可见卡内的编号，例如物理卡1、2对应 `[0, 1]`。
+
+```bash
+./run_open_door.sh --config configs/open_door.json --check
+CUDA_VISIBLE_DEVICES=1,2 ./run_open_door.sh --config configs/open_door.json
+```
+
+`--check` 检查配置解析并打印最终值，不启动仿真，也不验证数据文件或显存容量。
+可以复制JSON保存不同实验；相对数据/日志路径始终相对于项目根目录
+（启动脚本会切换目录），而不是JSON所在目录。最终生效值由原生启动器保存到
+每次运行的 `params/env.yaml` 和 `params/agent.yaml`。
+
+优先级为 **命令行 > 显式设置的兼容环境变量 > JSON > Python默认值**。
+例如终端之前 `export NUM_ENVS=1024` 后会覆盖JSON，需先 `unset NUM_ENVS` 才以JSON为准。
+不传 `--config` 时默认读取 `configs/open_door.json`。
+
+配置入口验证：12项测试通过，覆盖JSON/CLI覆盖、嵌套数组类型、最终资产绑定和
+配置导出后回载；另通过新入口完成本地4环境、完整网络的2轮WM/Actor/Critic短训，
+保存模型、CSV、TensorBoard和生效配置。该短训不验证CUHK大规模显存容量。
+
 ### RSI 与多卡启动
 
 训练已经使用与Sitting相同的Reference State Initialization（RSI），默认
@@ -143,21 +186,20 @@ OpenDoor checkpoint schema升为2，保存采样范围及开关。续训严格�
 10%历史分布；在选中bin内随机选帧。最后一个短bin也参与，因而并非严格逐帧均匀。
 各卡seed不同，分别采样RSI和物理环境；梯度、模型参数及归一化统计跨卡同步。
 
-新增的 `run_open_door.sh` 只封装原生mjlab入口，不复制训练循环：
+`run_open_door.sh` 读取上述JSON并封装原生mjlab入口：
 
 ```bash
-CUDA_VISIBLE_DEVICES=1,2 NUM_ENVS=1024 WM_BATCH=512 PI_BATCH=512 \
-ITERATIONS=10000 RUN_NAME=back_tracking_rsi ./run_open_door.sh
+CUDA_VISIBLE_DEVICES=1,2 ./run_open_door.sh
 ```
 
-GPU编号在 `CUDA_VISIBLE_DEVICES` 中明确指定，脚本内部用 `--gpu-ids all`。
+GPU编号在 `CUDA_VISIBLE_DEVICES` 中明确指定，JSON默认 `gpu_ids="all"`。
 不要在这个脚本外再套torchrun；mjlab会用torchrunx启动一卡一进程。
 环境数与WM/Actor batch均为每卡数值，上例全局2048环境、每次WM/Actor更新全局batch1024。
 保留完整网络、8步WM窗口、32步想象、10次WM更新、5轮Critic更新、BF16和torch.compile。
 默认前500轮只训练WM，Replay每卡256步、每200轮保存，学习率保持2e-4且不按卡数自动放大。
 首次运行和续训均重新填充Replay；checkpoint恢复模型/优化器，不恢复RSI采样统计或仿真状态。
 
-脚本支持用 `NUM_ENVS`、`WM_BATCH`、`PI_BATCH`、`ITERATIONS`、`WM_ONLY_ITERS`、
+脚本也兼容已有的 `NUM_ENVS`、`WM_BATCH`、`PI_BATCH`、`ITERATIONS`、`WM_ONLY_ITERS`、
 `SAVE_INTERVAL`、`LOG_EVERY`、`BUFFER_STEPS`、`LOG_ROOT`、`RUN_NAME` 环境变量覆盖规模；
 后续CLI参数直接传递给mjlab。续训应明确旧目录名与checkpoint，避免匹配到新建空目录：
 
@@ -181,14 +223,22 @@ mkdir -p logs/launch
 set -o pipefail
 CUDA_VISIBLE_DEVICES=1,2 OMP_NUM_THREADS=4 \
 SUPERMIMIC_MOTION_DIR=/data/wangfeng/supermimic_open_door_tracking/data/motions/open_door_prepared \
-LOG_ROOT="$PWD/logs/rsl_rl" NUM_ENVS=1024 WM_BATCH=512 PI_BATCH=512 \
-ITERATIONS=10000 RUN_NAME=back_tracking_dr_rsi \
-./run_open_door.sh 2>&1 | tee "logs/launch/open_door_dr_$(date +%Y%m%d_%H%M%S).log"
+./run_open_door.sh --config configs/open_door.json \
+  2>&1 | tee "logs/launch/open_door_dr_$(date +%Y%m%d_%H%M%S).log"
 ```
 
 模型与训练曲线目录为 `logs/rsl_rl/supermimic_open_door/<时间戳>_back_tracking_dr_rsi/`，
 实际位于 `/data/wangfeng/supermimic_vibed/logs/rsl_rl/supermimic_open_door/`。
-该命令从头训练，使用schema2的门随机化和自适应RSI；不加载旧固定门参数checkpoint。
+默认JSON从头训练，使用schema2的门随机化和自适应RSI；不加载旧固定门参数checkpoint。
+环境数、batch、总迭代等直接改JSON，无需修改这条启动命令。
+
+旧运行的显存快照（每卡1024环境、WM/Actor batch各512、Replay256步、horizon32）：
+初始化约10.6–10.9 GiB，编译阶段约14.3–14.4 GiB；WM-only第70轮时两卡分别
+16921 MiB（16.5 GiB）与11223 MiB（11.0 GiB）。这些是采样时刻的占用，
+**不是全程峰值**；没有记录Actor训练阶段的显存峰值，而且测量早于门随机化。
+建议先改为每卡1536环境、batch各512；2048环境/卡需验证完整WM/Actor/Critic阶段。
+仅Replay数据在1024/1536/2048环境时约254/381/509 MiB，仿真碰撞和求解器缓冲
+还会随环境数增长，不能只按Replay估计显存。
 
 CUHK 旧prior运行已按用户要求停止（2026-10-31）：最后日志2080轮，最新完整checkpoint
 为 `model_2000.pt`。原运行使用物理GPU 1、2，两张A100 40GB，每卡1024环境、
