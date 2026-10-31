@@ -56,6 +56,8 @@ class SuperMimicRunnerCfg(RslRlBaseRunnerCfg):
     """Replay prefill before updates, including after resuming."""
     wm_only_iters: int = 500
     """Initial learning iterations that update only the world model."""
+    wm_checkpoint: str | None = None
+    """Initialize only WM weights/statistics on a fresh run; full resume takes precedence."""
     lr_decay_iters: int = 250_000
     """Cosine learning-rate decay horizon, ending at 3% of the initial rate."""
     log_every: int = 50

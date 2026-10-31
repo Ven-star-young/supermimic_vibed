@@ -88,3 +88,6 @@ class TrackingTask:
                 f"Checkpoint task/schema mismatch: {metadata} != {self.checkpoint_metadata()}. "
                 "Retrain with the current observation and reward definition."
             )
+
+    def validate_world_model_checkpoint(self, checkpoint):
+        raise ValueError(f"Task {self.name} does not support world-model-only initialization")

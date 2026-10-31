@@ -136,6 +136,14 @@ reward is the same state function. All selected NPZs must say right_side; refere
 geometry phase is computed on the robot/hinge control clock, without force labels.
 See docs/open-door-side-workflow.md. JSON defaults explicitly select each task's clip.
 
+Fresh runs can explicitly initialize WM with training.wm_checkpoint. Door tasks allow
+back/side WM transfer only with the same dynamics/state/context/asset/time-step/model
+contract; reward/reference/contact definitions may differ. Transfer includes WM
+normalizers, keeps Actor/Critic/optimizers and counters fresh, and records source hash
+and iteration. Side defaults import the back model_10000 with wm_only_iters=0: Replay
+prefill then joint WM/Actor/Critic updates from iteration1. Full resume takes precedence
+and restores the side checkpoint without reopening its original WM source file.
+
 One simulator and Replay per rank; gradients average before clipping; initial parameters
 broadcast; normalizer statistics use global samples. Buffers/batches/environment counts
 are per rank, logged sim_steps are global. Only rank0 writes models/logs. Rank-local

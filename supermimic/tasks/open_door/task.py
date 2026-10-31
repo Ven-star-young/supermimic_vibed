@@ -1,5 +1,6 @@
 """OpenDoor reference-tracking task assembly and checkpoint schema."""
 
+import json
 import re
 from dataclasses import asdict, replace
 
@@ -84,6 +85,34 @@ class OpenDoorTask(TrackingTask):
                 **metadata, "door_randomization": asdict(randomization),
             }}
         super().validate_checkpoint(checkpoint)
+
+    def validate_world_model_checkpoint(self, checkpoint):
+        """Allow back/side transfer only when the learned physical mapping agrees."""
+        metadata = checkpoint.get("task")
+        if (not isinstance(metadata, dict)
+                or metadata.get("name") not in ("g1_open_door", "g1_open_door_side")
+                or metadata.get("schema_version") != 2):
+            raise ValueError("World-model initialization requires an OpenDoor schema-2 checkpoint")
+
+        def contract(values):
+            # Rewards, reference motions and Actor/Critic definitions do not enter
+            # the WM. Physics values and DR ranges are inputs through context;
+            # dynamics_schema identifies their semantics and normalization.
+            result = {key: values[key] for key in (
+                "dynamics_schema", "state", "context", "geometry", "door_asset", "control_dt")}
+            result["dimensions"] = {key: values["dimensions"][key]
+                                    for key in ("state", "action", "context")}
+            result["world_model_hidden"] = values["model"]["world_model_hidden"]
+            # Metadata may have passed through JSON, which changes tuples to lists.
+            return json.loads(json.dumps(result, allow_nan=False))
+
+        try:
+            source, target = contract(metadata), contract(self.checkpoint_metadata())
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("Invalid OpenDoor world-model checkpoint metadata") from exc
+        differences = [key for key in target if source[key] != target[key]]
+        if differences:
+            raise ValueError(f"OpenDoor world-model checkpoint mismatch: {', '.join(differences)}")
 
 
 def build_task(motion_dir=None, *, device="cuda:0", play=False, motion=None, kin=None, cfg=None,

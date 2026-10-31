@@ -16,6 +16,8 @@ from supermimic.rl.geometry import GeometryBank
 from supermimic.rl.models import RunningNorm
 from supermimic.rl.runner import SuperMimicRunner
 from supermimic.tasks.base import TaskDimensions
+from supermimic.tasks.open_door.dynamics import DoorDynamics
+from supermimic.tasks.open_door.models import WorldModel as DoorWorldModel
 from supermimic.tasks.sitting.dynamics import SittingDynamics
 from supermimic.tasks.sitting.models import SittingCritic, SittingPolicy, SittingWorldModel
 
@@ -139,8 +141,8 @@ def geometry_bank(key="chair", size=1.):
     return bank
 
 
-def make_runner(bank):
-    command = SimpleNamespace(task=SmallSittingTask(), geometry_bank=bank,
+def make_runner(bank=None, task=None):
+    command = SimpleNamespace(task=SmallSittingTask() if task is None else task, geometry_bank=bank,
                               cfg=SimpleNamespace(history_length=10, goal_frames=10))
     env = SimpleNamespace(num_envs=2, command_manager=SimpleNamespace(get_term=lambda _: command))
     env.unwrapped = env
@@ -209,6 +211,69 @@ def check_shared_model_ownership(output):
                 actor_only_keeps_scene_geometry=True, model_hashes=updated)
 
 
+def check_world_model_transfer(output):
+    metadata = {"name": "small_door_cpu_fixture"}
+
+    def validate(checkpoint):
+        if checkpoint.get("task") != metadata:
+            raise ValueError("Fixture world-model schema mismatch")
+
+    task = SimpleNamespace(
+        motion=None, mdp=None, dynamics=DoorDynamics(),
+        dimensions=TaskDimensions(73, 29, 46, 102, 75, 205),
+        goal_dim=lambda frames: 75 * frames,
+        make_policy=lambda *args: torch.nn.Linear(4, 29),
+        make_critic=lambda *args: torch.nn.Linear(4, 1),
+        make_world_model=lambda *args: DoorWorldModel(hidden=(16,)),
+        validate_model_coverage=lambda: None, checkpoint_metadata=lambda: metadata,
+        validate_world_model_checkpoint=validate)
+    source = DoorWorldModel(hidden=(16,))
+    with torch.no_grad():
+        for parameter in source.parameters():
+            parameter.fill_(.123)
+        source.in_norm.mean.fill_(.25)
+        source.in_norm.count.fill_(64)
+    path, corrupt = output / "source_wm.pt", output / "corrupt_wm.pt"
+    if distributed.primary():
+        checkpoint = {"task": metadata, "wm": source.state_dict(), "iteration": 123}
+        torch.save(checkpoint, path)
+        checkpoint["wm"]["out_norm.var"][0] = float("nan")
+        torch.save(checkpoint, corrupt)
+    dist.barrier()
+    runner = make_runner(task=task)
+    runner._init_training_models()
+    actor, critic = digest(runner.pi), digest(runner.critic)
+    provenance = runner.load_world_model(path)
+    assert provenance["iteration"] == 123
+    assert provenance["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert runner.wm.in_norm.count == 64
+    assert (runner.wm.in_norm.mean == .25).all()
+    assert (next(runner.wm.parameters()) == .123).all()
+    assert (digest(runner.pi), digest(runner.critic)) == (actor, critic)
+    assert not any(opt.state for opt in (runner.opt_wm, runner.opt_pi, runner.opt_v))
+    assert runner.current_learning_iteration == 0
+    state = {"provenance": provenance, "hash": digest(runner.wm)}
+    assert distributed.gather_objects(state) == [state] * 2
+    errors = []
+    for invalid, expected in ((output / "missing.pt", "FileNotFoundError"),
+                              (corrupt, "Invalid world-model tensor")):
+        fresh = make_runner(task=task)
+        fresh._init_training_models()
+        before = digest(fresh.wm)
+        try:
+            fresh.load_world_model(invalid if distributed.rank() == 1 else path)
+        except RuntimeError as exc:
+            message = str(exc)
+            assert "rank 1:" in message and expected in message
+            assert distributed.gather_objects(message) == [message] * 2
+            errors.append(message)
+        else:
+            raise AssertionError("WM source failure did not reach every process")
+        assert digest(fresh.wm) == before
+        assert fresh.world_model_initialization is None
+    return dict(wm_transfer=state, wm_transfer_errors=errors)
+
+
 def main():
     torch.set_num_threads(1)
     distributed.initialize("cpu")
@@ -217,6 +282,7 @@ def main():
         output = Path(sys.argv[1])
         output.mkdir(parents=True, exist_ok=True)
         report.update(check_shared_model_ownership(output))
+        report.update(check_world_model_transfer(output))
         (output / f"rank{distributed.rank()}.json").write_text(json.dumps(report))
     finally:
         distributed.shutdown()

@@ -24,3 +24,7 @@ def test_two_process_statistics_gradients_shared_geometry_and_failure(tmp_path):
     assert first["shared_encoder_wm_only"]
     assert first["checkpoint_restored"]
     assert first["actor_only_keeps_scene_geometry"]
+    assert first["wm_transfer"]["provenance"]["iteration"] == 123
+    assert len(first["wm_transfer_errors"]) == 2
+    assert "FileNotFoundError" in first["wm_transfer_errors"][0]
+    assert "Invalid world-model tensor" in first["wm_transfer_errors"][1]

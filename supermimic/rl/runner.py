@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import csv
 from dataclasses import asdict
+import hashlib
 import math
 import os
 from pathlib import Path
@@ -51,6 +52,8 @@ class SuperMimicRunner:
         self._clock_start = None
         self._git_repos = [__file__]
         self._writer = self._wandb_run = None
+        self.world_model_initialization = None
+        self._checkpoint_loaded = False
         self._validate_config()
 
     def _validate_config(self):
@@ -306,6 +309,8 @@ class SuperMimicRunner:
         distributed.assert_same((num_learning_iterations, self.current_learning_iteration),
                                 "learning iteration range")
         self._init_training_models()
+        if self.cfg.wm_checkpoint and not self._checkpoint_loaded and self.world_model_initialization is None:
+            self.load_world_model(self.cfg.wm_checkpoint)
         self.replay_env = self.make_replay_env()
         self.buffer = ReplayBuffer(self.cfg.buffer_steps, self.replay_env.N, self.device,
                                    state_dim=self.dims.state, action_dim=self.dims.action, context_dim=self.dims.context)
@@ -368,6 +373,7 @@ class SuperMimicRunner:
                       "iteration": self.current_learning_iteration, "wall_time": self.wall_time, "sim_steps": self.sim_steps,
                       "train_cfg": self.train_cfg, "policy_config": self.policy_config,
                       "task": self.task.checkpoint_metadata(), "infos": infos,
+                      "world_model_initialization": self.world_model_initialization,
                       "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
                       "distributed": {"world_size": distributed.world_size(),
                                       "batch_sizes": "per_rank", "sim_steps": "global"}}
@@ -430,7 +436,45 @@ class SuperMimicRunner:
             self.current_learning_iteration = checkpoint.get("iteration", 0)
             self.wall_time = checkpoint.get("wall_time", 0.0)
             self.sim_steps = checkpoint.get("sim_steps", 0)
+        self.world_model_initialization = checkpoint.get("world_model_initialization")
+        self._checkpoint_loaded = True
         return checkpoint.get("infos")
+
+    def load_world_model(self, path):
+        """Warm start dynamics only; retain fresh policy, value, optimizers and clock."""
+        self._init_training_models()
+        if (self._checkpoint_loaded or self.world_model_initialization is not None
+                or self.current_learning_iteration or any(opt.state for opt in (self.opt_wm, self.opt_pi, self.opt_v))):
+            raise ValueError("World-model initialization requires a fresh, untrained runner")
+        with distributed.local_phase(self.device, "world-model initialization"):
+            source = Path(path).expanduser().resolve()
+            # Hash and load the same open file, even if another run replaces its path.
+            with source.open("rb") as stream:
+                checksum = hashlib.sha256()
+                for block in iter(lambda: stream.read(1024 * 1024), b""):
+                    checksum.update(block)
+                digest = checksum.hexdigest()
+                stream.seek(0)
+                checkpoint = torch.load(stream, map_location="cpu", weights_only=False)
+            self.task.validate_world_model_checkpoint(checkpoint)
+            weights, expected = checkpoint.get("wm"), self.wm.state_dict()
+            if not isinstance(weights, dict) or weights.keys() != expected.keys():
+                raise ValueError("World-model checkpoint tensor keys do not match")
+            for name, value in weights.items():
+                if (not isinstance(value, torch.Tensor) or value.shape != expected[name].shape
+                        or value.dtype != expected[name].dtype or not bool(torch.isfinite(value).all())):
+                    raise ValueError(f"Invalid world-model tensor: {name} (shape, dtype or nonfinite values)")
+                if name.endswith((".var", ".count")) and bool((value < 0).any()):
+                    raise ValueError(f"Invalid world-model normalizer: {name}")
+            provenance = dict(path=str(source), sha256=digest, iteration=checkpoint.get("iteration"),
+                              task=checkpoint["task"]["name"])
+        distributed.assert_same(provenance, "world-model initialization checkpoint")
+        self.wm.load_state_dict(weights, strict=True)
+        self.world_model_initialization = provenance
+        if distributed.primary():
+            print(f"[WM init] {source} | source iteration={provenance['iteration']} | "
+                  "loaded WM weights and statistics; fresh Actor/Critic/optimizers", flush=True)
+        return provenance
 
     def checkpoint_extras(self):
         """Experiment metadata, separate from a task's network schema."""

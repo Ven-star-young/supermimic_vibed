@@ -10,6 +10,8 @@ task、mdp、rl_cfg结构。共享OpenDoor的state、dynamics、网络、门资�
 编辑 [`configs/open_door_right_side.json`](../configs/open_door_right_side.json)：
 
 - `training`：每卡环境数、batch、迭代数和日志，格式与背部一致。默认1024环境、batch各512。
+- `training.wm_checkpoint`：背部第10000轮checkpoint，用于初始化侧面WM。
+- `training.wm_only_iters=0`：第1轮同时更新WM、Actor和Critic，没有单独WM预训练阶段。
 - `task.motion_dir`：默认单个 `video6_g1_door_video45_right_side_asset.npz`，自动使用同名XML。
 - `task.episode_length_s=15`：适配约12.9秒参考；参考结束仍正常终止。
 - `task.door_reward_cfg`：独立侧面奖励，具体参数如下。
@@ -107,12 +109,42 @@ SUPERMIMIC_MOTION_DIR=/absolute/path/video6_g1_door_video45_right_side_asset.npz
 checkpoint记录独立task name、允许区域、参考phase定义和奖励；不能将背部checkpoint
 直接当作侧面任务resume。网络维度相同也不代表奖励语义相同。
 
+## 使用背部世界模型初始化
+
+侧面JSON默认选择CUHK已完成的背部训练：
+
+```json
+"wm_checkpoint": "logs/rsl_rl/supermimic_open_door/2026-10-31_17-06-12_back_tracking_dr_rsi/model_10000.pt",
+"wm_only_iters": 0,
+"resume": false
+```
+
+路径相对项目根目录，经过已有 `logs` 软链接读取 `/data`。其他机器需复制该文件或修改
+`wm_checkpoint`。显式设为 `null` 时WM从头初始化；即使这样 `wm_only_iters=0` 仍保持联合训练。
+
+初始化只加载WM网络和输入/输出归一化统计；Actor、Critic、三个优化器和迭代数从头开始。
+WM继续学习侧面采集的数据，不冻结。先填充64个仿真步的Replay，再从第1轮进行
+WM、Actor、Critic更新；填充Replay不包含任何梯度更新。
+
+加载检查动力学schema、state/context语义、门资产、控制时间步、WM结构和所有张量的形状、
+类型及有限性。不同任务的reward、参考和接触定义不进入WM，所以显式迁移时允许不同；
+普通完整resume仍检查独立侧面任务的全部语义。尚未定义WM迁移接口的任务不会只凭形状相同接受文件。
+
+新checkpoint的 `world_model_initialization` 记录来源路径、SHA256、源任务及源迭代。
+以后继续侧面训练使用正常 `resume=true`；完整resume优先，不再打开背部初始化文件，
+因此原文件移动或删除也不会阻止恢复已保存的侧面模型。
+
 ## 验证
 
-当前工作区全仓370项测试通过。CPU测试覆盖独立JSON和任务注册、实际碰撞表面/前臂FK、参考阶段、reward梯度和dt缩放、
+当前工作区全仓404项测试通过。CPU测试覆盖独立JSON和任务注册、实际碰撞表面/前臂FK、参考阶段、reward梯度和dt缩放、
 合法区域穿透容差、双向checkpoint拒绝、参数恢复及接触力分类。原背部几何/奖励测试也保留。
 本地4环境、完整网络完成2轮WM/Actor/Critic，保存后从新进程开启BF16/torch.compile续训到
 第3轮，网络权重和归一化统计均有限。侧面评估和轨迹导出通过；短训策略在第38个控制步
 结束，尚未完成参考。诊断使用冻结的数据副本，未覆盖正在编辑的源数据，也未启动CUHK长训。
 输出位于 `logs/rsl_rl/supermimic_open_door_side/*side_task_smoke/`、
 `*side_task_compile_resume_verified/` 和 `logs/open_door_side_validation/`。
+
+WM迁移验证使用实际CUHK背部 `model_10000.pt`：完整网络、4环境完成2轮侧面联合更新，
+第1轮即包含Actor/Critic。输出 `*back_wm10000_side_joint_smoke/model_2.pt` 的源迭代记录为10000，
+侧面迭代为2，三个优化器均有新状态，网络/统计均有限。双进程CPU回归覆盖相同来源校验、
+WM独立加载，以及单rank文件缺失/损坏时同步报错；正常侧面resume无需保留源文件。
