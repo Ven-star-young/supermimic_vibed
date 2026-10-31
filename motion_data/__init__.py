@@ -29,6 +29,9 @@ def validate_motion(clip: dict) -> dict:
         raise ValueError("joint_pos must have shape (T,J), with T > 0")
     n = len(joints)
     shapes = {"root_pos": (n, 3), "root_quat": (n, 4), "joint_pos": joints.shape}
+    if "door_angle" in clip:
+        from .door import door_metadata
+        door_metadata(clip)
     object_keys = {"object_pos", "object_quat", "object_scale"}
     if object_keys & clip.keys():
         if not object_keys <= clip.keys():

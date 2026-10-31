@@ -4,7 +4,7 @@
 Differentiable World Model* ([arXiv:2610.28480](https://arxiv.org/abs/2610.28480)).
 Original implementation: **Chong Zhang** (ETH Zurich). Code license: [MIT](LICENSE).
 
-这个分支按任务类别组织网络。Tracking 和 Sitting 各自拥有 Actor、WM、Critic；
+这个分支按任务类别组织网络。Tracking、Sitting 和 OpenDoor 各自拥有 Actor、WM、Critic；
 共同复用真实 Replay、WM 拟合、可微分想象和 Critic 更新代码。Sitting 的目标是
 学习该类任务中的机器人–椅子动力学，帮助训练策略；收敛和未见椅型表现需要实验评价。
 
@@ -17,6 +17,7 @@ Original implementation: **Chong Zhang** (ETH Zurich). Code license: [MIT](LICEN
 |---|---:|---:|---:|---:|
 | Tracking | 93 | 962→29 | 133→70 | 914→1 |
 | Sitting | 102 | 1116→29 | 224→82 | 1101→1 |
+| OpenDoor（背部跟踪） | 102 | 1052→29 | 152→72 | 955→1 |
 
 默认历史和未来参考各10帧。Sitting 每个环境只有一把椅子；不同环境可以使用
 不同椅型，采用固定平衡分配，不周期性关闭重建场景。1024×6的资产局部点云编码为
@@ -25,6 +26,7 @@ Original implementation: **Chong Zhang** (ETH Zurich). Code license: [MIT](LICEN
 
 - [模型维度、坐标系和优化路径](docs/task-specific-sitting-design.md)
 - [reference选择、训练配置、多卡、部署](docs/sitting-workflow.md)
+- [OpenDoor数据适配、统一状态奖励与训练](docs/open-door-workflow.md)
 - [数据源转换、纯运动学回放、碰撞资产](docs/motion-and-assets.md)
 - [实现契约](CONTEXT.md)
 
@@ -35,6 +37,7 @@ supermimic/mdp/                共用机器人状态、动作、reward、reset
 supermimic/rl/                 训练循环、Replay、多卡、归一化与几何组件
 supermimic/tasks/g1_tracking/  Tracking网络与任务
 supermimic/tasks/sitting/      Sitting网络、动力学、场景和混合椅型实验
+supermimic/tasks/open_door/    G1＋被动铰链轨迹跟踪，复用Tracking网络与Runner
 supermimic/scripts/            train_sitting / play_policy / evaluate
 ```
 
@@ -88,6 +91,23 @@ CUDA_VISIBLE_DEVICES=0,1 OMP_NUM_THREADS=4 \
 训练目录保存完整checkpoint、split.json、experiment.json和train_log.csv。
 恢复训练检查网络schema、训练split、几何和碰撞配置；Replay重新填充。
 物理随机化保持椅子质量5–15kg、G1–椅子摩擦0.3–1.2，评估固定10kg和1.0。
+
+## 背部开门跟踪
+
+已放入 `data/motions/open_door/` 的 GMR NPZ/XML 由已有来源转换目录处理：
+
+```bash
+.venv/bin/python -m motion_data.converters.gmr \
+  data/motions/open_door data/motions/open_door_prepared
+
+OMP_NUM_THREADS=4 .venv/bin/train Mjlab-SuperMimic-OpenDoor-Unitree-G1 \
+  --gpu-ids '[0]' --env.scene.num-envs 128 --agent.run-name back_tracking
+```
+
+每帧未来目标为机器人73＋门角/角速度2，共75维；没有几何编码器。
+真实与想象使用同一个state-based reward，MuJoCo接触只用于评估。
+原始参考含穿模，保留源数据并默认使用穿透惩罚；硬穿透终止可配置。
+完整命令、维度和奖励公式见[OpenDoor工作流](docs/open-door-workflow.md)。
 
 ## 部署与验证
 

@@ -1,9 +1,12 @@
 # Task-specific learning contracts
 
 This branch trains a separate Actor, World Model and Critic per task family.
-Tracking and Sitting share optimization machinery, not model parameters or a cross-task
+Tracking, Sitting and OpenDoor share optimization machinery, not model parameters or a cross-task
 state schema. Sitting contains exactly G1 + one free rigid chair per environment.
 Different worlds may use different native chair variants and matching references.
+OpenDoor tracks a synchronized G1 and passive -Z hinge reference using fixed door geometry
+and randomized door physics; it has no PointNet or task memory. Source adaptation lives
+in motion_data/converters/gmr.py.
 
 ## Ownership
 
@@ -61,6 +64,28 @@ See [the complete model contract](docs/task-specific-sitting-design.md).
 
 ## Geometry and optimization
 
+OpenDoor state73 is robot71 + hinge angle/velocity2. Context46 is robot physical33,
+hinge position3, door dimensions3 and physical parameters7. Actor frame102 is
+robot93 + relative hinge3, relative door normal3, sin/cos(angle), angular velocity.
+Future goal75/frame is robot73 + angle + 0.1*angular_velocity, interleaved per frame.
+Actor decoder1052, WM152→72, critic955. The WM receives robot71+door9+action29+robot
+physics33+door dimensions/physics10; hinge position enters only through relative features.
+Door angle remains the positive MuJoCo joint coordinate; world panel yaw is -angle.
+The supplied raw245@30Hz clip becomes407@50Hz, with velocities recomputed per clip.
+The current prior aligns the initial pelvis heading with the closed door. Its
+filename is unchanged; conversion stores source NPZ/XML hashes and rejects stale
+prepared output unless explicitly refreshed. Archive subdirectories are not loaded.
+
+OpenDoor uses the same pure tensor reward for native and imagined states: inherited
+robot tracking (including action-rate/joint-limit once), hinge angle/speed tracking,
+reference-gated back-face proximity/alignment and forbidden-surface penetration.
+Collision samples come from the actual G1 interaction asset; only the legal rear
+torso/logo patch is exempt. A bounded rational penalty retains gradients in deep
+overlap. Force-based contact is evaluation-only. Raw references contain penetration,
+so penetration termination defaults off; when configured, hard/soft failures share
+the same state boundary. Robot tracking and hinge limits still terminate episodes.
+See [OpenDoor workflow](docs/open-door-workflow.md) for the fixed geometry and defaults.
+
 GeometryBank version3 uses only real assets, starting at ID0. Each asset is deterministic
 1024×6 local metric xyz+normal samples, scaled once, with metric extents. PointNet
 6→64→128, max-pool, concatenate extents3, linear131→64. IDs select assets only.
@@ -93,6 +118,12 @@ Native variant padding must preserve these roles. Collision sizing uses25% headr
 128-contact/512-constraint alignment; sticky overflow is rejected before Replay insertion.
 Missing collision caches fail explicitly. EPA scratch is enlarged before graph capture.
 
+OpenDoor independently samples uniform mass5–15kg, hinge damping2.5–7.5Nm·s/rad,
+hinge friction0.25–0.75Nm, spring stiffness10–30Nm/rad and robot-door friction0.3–1.2
+per environment/reset. Inertia scales with mass; native model and Replay context update
+together. Play/eval use nominal8kg/5/0.5/20/0.7; spring reference stays−0.1rad and geometry
+is unchanged. `door_randomization_cfg.enabled=False` uses nominal physics in training too.
+
 One simulator and Replay per rank; gradients average before clipping; initial parameters
 broadcast; normalizer statistics use global samples. Buffers/batches/environment counts
 are per rank, logged sim_steps are global. Only rank0 writes models/logs. Rank-local
@@ -106,6 +137,9 @@ iteration counters and task metadata. Experiment infos contain split fingerprint
 collision profile and training exposure. Full resume validates the asset bank and experiment;
 Actor deployment validates task/policy schema but keeps the destination scene's geometry.
 Shared encoder tensors in pi and wm must agree. No old entity checkpoint conversion.
+OpenDoor schema2 stores door randomization ranges/enabled and nominal physics; full resume
+rejects changed distributions and legacy fixed-physics schema1. Evaluation restores those
+settings before constructing the scene, while play mode still disables sampling.
 
 Tools retain source conversion, kinematic replay, collision preparation/checks, reference
 selection, split generation, plotting and trajectory rendering. Test helpers live under

@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MODEL = ROOT / "data/g1_description/g1_29dof.xml"
 
 
-def make_scene(model_path, clip):
+def make_scene(model_path, clip, door_xml=None):
     import mujoco
 
     spec = mujoco.MjSpec.from_file(str(Path(model_path).resolve()))
@@ -41,6 +41,15 @@ def make_scene(model_path, clip):
                       rgba=[.56, .36, .18, 1], mass=0)
     elif "object_pos" in clip:
         raise ValueError("Clip has object poses but no mesh; convert it with --object-usd-dir")
+    if "door_angle" in clip:
+        from motion_data.door import validate_door_asset
+        if door_xml is None:
+            raise ValueError("Clip has door_angle; provide its matching door_xml for replay")
+        if not Path(door_xml).is_file():
+            raise FileNotFoundError(f"Missing paired door XML: {door_xml}")
+        validate_door_asset(clip, door_xml)
+        spec.attach(mujoco.MjSpec.from_file(str(Path(door_xml).resolve())),
+                    prefix="replay_door/", frame=spec.worldbody.add_frame())
     for geom in spec.geoms:
         geom.contype = geom.conaffinity = 0
     model = spec.compile()
@@ -69,6 +78,8 @@ def set_frame(model, data, clip, frame, root_adr, joint_adrs):
         mocap = int(model.body("replay_object").mocapid[0])
         data.mocap_pos[mocap] = clip["object_pos"][frame]
         data.mocap_quat[mocap] = clip["object_quat"][frame]
+    if "door_angle" in clip:
+        data.joint("replay_door/door_hinge").qpos[0] = clip["door_angle"][frame]
     data.time = frame / float(clip["fps"])
     mujoco.mj_kinematics(model, data)
     mujoco.mj_camlight(model, data)
@@ -97,7 +108,8 @@ def main():
     clip = load_motion(path)
     n, fps = len(clip["root_pos"]), float(clip["fps"])
     print(f"[{args.index}/{len(files) - 1}] {path.name}: {n} frames, {fps:g} Hz, {n / fps:g}s")
-    model, data, root_adr, joint_adrs = make_scene(args.model, clip)
+    model, data, root_adr, joint_adrs = make_scene(
+        args.model, clip, door_xml=path.with_suffix(".xml") if "door_angle" in clip else None)
 
     def apply(frame):
         set_frame(model, data, clip, frame, root_adr, joint_adrs)
@@ -106,6 +118,8 @@ def main():
     points = clip["root_pos"]
     if "object_pos" in clip:
         points = np.concatenate((points, clip["object_pos"]))
+    if "door_angle" in clip:
+        points = np.concatenate((points, clip["door_hinge_pos"][None]))
     camera.lookat[:] = (points.min(axis=0) + points.max(axis=0)) / 2
     camera.lookat[2] = .7
     camera.distance = max(3.0, float(np.ptp(points[:, :2], axis=0).max()) + 1.8)
