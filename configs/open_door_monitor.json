@@ -1,0 +1,9 @@
+{
+  "host": "CUHK",
+  "remote_repo": "/home/wangfeng/supermimic_vibed",
+  "remote_run": "/data/wangfeng/supermimic_vibed/logs/rsl_rl/supermimic_open_door/2026-10-31_17-06-12_back_tracking_dr_rsi",
+  "remote_motion_dir": "/data/wangfeng/supermimic_open_door_tracking/data/motions/open_door_prepared",
+  "mount": "/media/frank/Lexar",
+  "output_root": "/media/frank/Lexar/supermimic_vibed/open_door",
+  "device": "cuda:0"
+}

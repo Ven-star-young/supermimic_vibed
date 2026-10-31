@@ -312,6 +312,27 @@ RMSE只覆盖实际执行前缀，需结合完成率阅读；完成reference本�
 非法接触的回合数（各类别法向力和>1N）。这些数据只用于诊断，不改变训练reward/done，
 也不证明全部开门力矩由背部产生。评估会从checkpoint恢复奖励及门物性参数。
 
+## 定时归档与策略视频
+
+本地配置 [`configs/open_door_monitor.json`](../configs/open_door_monitor.json) 指定SSH主机、
+固定训练run、远端prepared reference目录、Lexar挂载点及输出目录。
+Codex heartbeat每10分钟运行一次以下命令；也可手动执行：
+
+```bash
+.venv/bin/python -m tools.monitor_open_door --config configs/open_door_monitor.json
+```
+
+脚本只读CUHK，下载所有尚未处理的正式 `model_N.pt`（忽略临时文件），核对大小和SHA-256，
+随后在本机GPU执行现有evaluate入口，从参考首帧以固定名义物性评测，记录实际策略轨迹。
+`tools.render` 将实际机器人与门角渲染为MP4，并叠加参考机器人和角度，保留episode终止帧。
+录像需要本地ffmpeg及EGL。Lexar未挂载时拒绝写入；模型或录像失败会留待下次重试，
+已完成结果不重复下载/评测；锁避免两个检查同时执行。
+
+输出为 `<output_root>/<run>/checkpoints/`、`evaluations/model_N/`（MP4、rollout.npz、metrics.json）、
+`evaluation_summary.csv`、`status.json`、`train_log.csv`，并保存reference哈希快照及训练参数。
+更换训练run时需明确修改配置并更新heartbeat描述，不自动追踪其他实验。
+保持本机、Codex应用运行及Lexar挂载；训练完成且最终模型/录像全部归档后heartbeat暂停。
+
 ## 验证范围
 
 CPU测试覆盖数据转换/时间对齐、状态与增量、轴向/坐标、模型梯度、几何与MuJoCo碰撞对照、
