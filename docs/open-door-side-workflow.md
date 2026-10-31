@@ -167,6 +167,22 @@ CUDA_VISIBLE_DEVICES=1,2 ./run_open_door_side.sh \
 另完成一轮BF16/torch.compile训练，三者均更新且权重/统计有限。双进程测试覆盖一致加载、
 单卡Actor损坏时同步拒绝；回归测试覆盖旧奖励评估及新奖励微调后正常resume。
 
+## 当前奖励下从头初始化Actor/Critic
+
+使用 [`configs/open_door_right_side_fresh_ac.json`](../configs/open_door_right_side_fresh_ac.json)：
+保留1cm避让奖励和背部第10000轮WM初始化，Actor、Critic及三个优化器从头初始化。
+`resume=false`、`finetune_checkpoint=null`、`wm_only_iters=0`，先填充Replay，
+随后第1轮共同更新WM/Actor/Critic。环境数3072/卡、batch各512、学习率2e-4、10000轮。
+这组配置不加载已有侧面Actor，也不恢复先前训练迭代。
+
+```bash
+CUDA_VISIBLE_DEVICES=1,2 ./run_open_door_side.sh \
+  --config configs/open_door_right_side_fresh_ac.json \
+  --env.commands.motion.motion-dir data/motions/open_door_prepared/video6_g1_door_video45_right_side_asset.npz
+```
+
+实验目录后缀 `right_side_clearance_1cm_fresh_ac`，和微调实验分开。
+
 ## 验证
 
 当前工作区全仓450项测试通过。CPU测试覆盖独立JSON和任务注册、实际碰撞表面/前臂FK、参考阶段、reward梯度和dt缩放、
