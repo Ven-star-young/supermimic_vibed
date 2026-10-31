@@ -53,10 +53,13 @@ class SuperMimicRunner:
         self._git_repos = [__file__]
         self._writer = self._wandb_run = None
         self.world_model_initialization = None
+        self.finetune_initialization = None
         self._checkpoint_loaded = False
         self._validate_config()
 
     def _validate_config(self):
+        if self.cfg.wm_checkpoint and self.cfg.finetune_checkpoint:
+            raise ValueError("Select only one of wm_checkpoint and finetune_checkpoint")
         positive = ("buffer_steps", "horizon", "wm_window", "wm_batches", "wm_batch", "pi_batch",
                     "critic_epochs", "critic_minibatches", "lr_decay_iters", "log_every", "save_interval")
         if any(getattr(self.cfg, name) < 1 for name in positive):
@@ -309,8 +312,11 @@ class SuperMimicRunner:
         distributed.assert_same((num_learning_iterations, self.current_learning_iteration),
                                 "learning iteration range")
         self._init_training_models()
-        if self.cfg.wm_checkpoint and not self._checkpoint_loaded and self.world_model_initialization is None:
-            self.load_world_model(self.cfg.wm_checkpoint)
+        if not self._checkpoint_loaded and self.finetune_initialization is None and self.world_model_initialization is None:
+            if self.cfg.finetune_checkpoint:
+                self.load_finetune(self.cfg.finetune_checkpoint)
+            elif self.cfg.wm_checkpoint:
+                self.load_world_model(self.cfg.wm_checkpoint)
         self.replay_env = self.make_replay_env()
         self.buffer = ReplayBuffer(self.cfg.buffer_steps, self.replay_env.N, self.device,
                                    state_dim=self.dims.state, action_dim=self.dims.action, context_dim=self.dims.context)
@@ -374,6 +380,7 @@ class SuperMimicRunner:
                       "train_cfg": self.train_cfg, "policy_config": self.policy_config,
                       "task": self.task.checkpoint_metadata(), "infos": infos,
                       "world_model_initialization": self.world_model_initialization,
+                      "finetune_initialization": self.finetune_initialization,
                       "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
                       "distributed": {"world_size": distributed.world_size(),
                                       "batch_sizes": "per_rank", "sim_steps": "global"}}
@@ -437,16 +444,27 @@ class SuperMimicRunner:
             self.wall_time = checkpoint.get("wall_time", 0.0)
             self.sim_steps = checkpoint.get("sim_steps", 0)
         self.world_model_initialization = checkpoint.get("world_model_initialization")
+        self.finetune_initialization = checkpoint.get("finetune_initialization")
         self._checkpoint_loaded = True
         return checkpoint.get("infos")
 
     def load_world_model(self, path):
         """Warm start dynamics only; retain fresh policy, value, optimizers and clock."""
+        return self._load_initialization(path, with_actor=False)
+
+    def load_finetune(self, path):
+        """Reuse Actor/WM under new rewards; keep Critic, optimizers and clock fresh."""
+        return self._load_initialization(path, with_actor=True)
+
+    def _load_initialization(self, path, *, with_actor):
         self._init_training_models()
         if (self._checkpoint_loaded or self.world_model_initialization is not None
+                or self.finetune_initialization is not None
                 or self.current_learning_iteration or any(opt.state for opt in (self.opt_wm, self.opt_pi, self.opt_v))):
-            raise ValueError("World-model initialization requires a fresh, untrained runner")
-        with distributed.local_phase(self.device, "world-model initialization"):
+            raise ValueError("Checkpoint initialization requires a fresh, untrained runner")
+        description = "fine-tune initialization" if with_actor else "world-model initialization"
+        modules = {"wm": self.wm, **({"pi": self.pi} if with_actor else {})}
+        with distributed.local_phase(self.device, description):
             source = Path(path).expanduser().resolve()
             # Hash and load the same open file, even if another run replaces its path.
             with source.open("rb") as stream:
@@ -456,24 +474,40 @@ class SuperMimicRunner:
                 digest = checksum.hexdigest()
                 stream.seek(0)
                 checkpoint = torch.load(stream, map_location="cpu", weights_only=False)
-            self.task.validate_world_model_checkpoint(checkpoint)
-            weights, expected = checkpoint.get("wm"), self.wm.state_dict()
-            if not isinstance(weights, dict) or weights.keys() != expected.keys():
-                raise ValueError("World-model checkpoint tensor keys do not match")
-            for name, value in weights.items():
-                if (not isinstance(value, torch.Tensor) or value.shape != expected[name].shape
-                        or value.dtype != expected[name].dtype or not bool(torch.isfinite(value).all())):
-                    raise ValueError(f"Invalid world-model tensor: {name} (shape, dtype or nonfinite values)")
-                if name.endswith((".var", ".count")) and bool((value < 0).any()):
-                    raise ValueError(f"Invalid world-model normalizer: {name}")
+            if with_actor:
+                self.task.validate_finetune_checkpoint(checkpoint)
+                policy = checkpoint.get("policy_config", {})
+                if any(policy.get(key) != self.policy_config[key] for key in ("history_length", "goal_frames")):
+                    raise ValueError("Fine-tune Actor history/goal configuration mismatch")
+            else:
+                self.task.validate_world_model_checkpoint(checkpoint)
+            # Validate every selected network before changing any of them.
+            for key, module in modules.items():
+                weights, expected = checkpoint.get(key), module.state_dict()
+                label = "world-model" if key == "wm" else "Actor"
+                if not isinstance(weights, dict) or weights.keys() != expected.keys():
+                    raise ValueError(f"{label} checkpoint tensor keys do not match")
+                for name, value in weights.items():
+                    if (not isinstance(value, torch.Tensor) or value.shape != expected[name].shape
+                            or value.dtype != expected[name].dtype or not bool(torch.isfinite(value).all())):
+                        raise ValueError(f"Invalid {label} tensor: {name} (shape, dtype or nonfinite values)")
+                    if name.endswith((".var", ".count")) and bool((value < 0).any()):
+                        raise ValueError(f"Invalid {label} normalizer: {name}")
             provenance = dict(path=str(source), sha256=digest, iteration=checkpoint.get("iteration"),
                               task=checkpoint["task"]["name"])
-        distributed.assert_same(provenance, "world-model initialization checkpoint")
-        self.wm.load_state_dict(weights, strict=True)
-        self.world_model_initialization = provenance
+        distributed.assert_same(provenance, f"{description} checkpoint")
+        for key, module in modules.items():
+            module.load_state_dict(checkpoint[key], strict=True)
+        if with_actor:
+            self.finetune_initialization = provenance
+            self.world_model_initialization = checkpoint.get("world_model_initialization")
+        else:
+            self.world_model_initialization = provenance
         if distributed.primary():
-            print(f"[WM init] {source} | source iteration={provenance['iteration']} | "
-                  "loaded WM weights and statistics; fresh Actor/Critic/optimizers", flush=True)
+            loaded = "Actor/WM" if with_actor else "WM"
+            fresh = "Critic/optimizers" if with_actor else "Actor/Critic/optimizers"
+            print(f"[{description}] {source} | source iteration={provenance['iteration']} | "
+                  f"loaded {loaded} weights and statistics; fresh {fresh}", flush=True)
         return provenance
 
     def checkpoint_extras(self):

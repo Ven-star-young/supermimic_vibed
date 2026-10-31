@@ -17,6 +17,7 @@ class SideDoorRewardCfg:
     velocity_std: float = 1.0
     contact_weight: float = .25
     illegal_weight: float = 2.0
+    illegal_margin: float = .01
     contact_distance_std: float = .05
     reference_contact_std: float = .05
     contact_penetration_weight: float = 2.0
@@ -31,7 +32,8 @@ class SideDoorRewardCfg:
                 continue
             if not math.isfinite(value) or value < 0:
                 raise ValueError(f"{name} must be finite and nonnegative")
-            if not name.endswith("weight") and name != "contact_penetration_tolerance" and value == 0:
+            if (not name.endswith("weight")
+                    and name not in ("contact_penetration_tolerance", "illegal_margin") and value == 0):
                 raise ValueError(f"{name} must be positive")
 
 
@@ -63,17 +65,17 @@ class SideDoorMDP(DoorMDP):
         contact = (torch.exp(-geom["contact_distance_sq"] / c.contact_distance_std**2)
                    * smoothstep((geom["alignment"] - .5) / .5))
 
-        def penetration(clearance, tolerance=0.):
-            depth_sq = (-clearance - tolerance).clamp_min(0).square()
+        def penetration(depth):
+            depth_sq = depth.clamp_min(0).square()
             return (depth_sq / (depth_sq + c.penetration_scale**2)).amax(-1)
 
         values = {
             "door_angle": c.angle_weight * torch.exp(-e_angle / c.angle_std**2),
             "door_velocity": c.velocity_weight * torch.exp(-e_velocity / c.velocity_std**2),
             "contact_state": c.contact_weight * self.reference_contact_phase[f] * contact,
-            "illegal_state": -c.illegal_weight * penetration(geom["illegal_clearance"]),
+            "illegal_state": -c.illegal_weight * penetration(c.illegal_margin - geom["illegal_clearance"]),
             "contact_penetration": -c.contact_penetration_weight * penetration(
-                geom["contact_clearance"], c.contact_penetration_tolerance),
+                -geom["contact_clearance"] - c.contact_penetration_tolerance),
         }
         values = {key: value * self.control_dt for key, value in values.items()}
         reward = (robot[0] if terms else robot) + sum(values.values())

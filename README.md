@@ -133,6 +133,8 @@ CUDA_VISIBLE_DEVICES=1,2 ./run_open_door_side.sh
 输出在 `logs/rsl_rl/supermimic_open_door_side/`，不兼容背部任务直接续训。
 侧面JSON通过 `training.wm_checkpoint` 只导入背部第10000轮WM及归一化统计，
 Actor/Critic和优化器从头初始化。`wm_only_iters=0`，从第1轮共同训练三者。
+已有侧面策略要减少脚贴门，使用 `configs/open_door_right_side_finetune.json`：
+1cm非法区域避让，载入侧面Actor+WM，重置Critic/优化器；默认2000轮、学习率5e-5。
 轨迹须包含 `door_contact_region="right_side"`；混入背部数据会报错。
 使用环境变量指定服务器数据时，应给侧面单个NPZ路径。详见[侧面工作流](docs/open-door-side-workflow.md)。
 

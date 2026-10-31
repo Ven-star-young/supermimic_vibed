@@ -144,6 +144,15 @@ and iteration. Side defaults import the back model_10000 with wm_only_iters=0: R
 prefill then joint WM/Actor/Critic updates from iteration1. Full resume takes precedence
 and restores the side checkpoint without reopening its original WM source file.
 
+Side forbidden surfaces now use a 1cm clearance margin in the same bounded cost;
+legal surface tolerance stays3mm. Old side checkpoints missing illegal_margin mean
+zero, preserving their original evaluation/reward semantics. Explicit
+training.finetune_checkpoint imports same-task Actor+WM and normalizers while allowing
+reward changes; Critic/optimizers/counters start fresh. Other task contracts stay strict.
+It is exclusive with wm_checkpoint; full resume retains saved provenance and overrides
+either initialization path. Separate fine-tune JSON selects side model_10000, lr5e-5,
+2000 iterations and3072envs/GPU with immediate WM/Actor/Critic updates.
+
 One simulator and Replay per rank; gradients average before clipping; initial parameters
 broadcast; normalizer statistics use global samples. Buffers/batches/environment counts
 are per rank, logged sim_steps are global. Only rank0 writes models/logs. Rank-local

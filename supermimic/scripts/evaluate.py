@@ -184,6 +184,9 @@ def _restore_open_door_config(cfg, checkpoint):
                          ("door_reward", "door_reward_cfg"), ("robot_reward", "reward_cfg"),
                          ("observation", "observation_cfg"), ("termination", "termination_cfg")):
         current, values = getattr(command, field), metadata.get(saved, {})
+        if isinstance(command, SideDoorCommandCfg) and saved == "door_reward":
+            # Schema-2 side checkpoints predating clearance avoidance used zero.
+            values = {"illegal_margin": 0.0, **values}
         if set(values) != set(asdict(current)):
             raise ValueError(f"OpenDoor checkpoint {saved} fields do not match the task schema")
         updates[field] = replace(current, **values)

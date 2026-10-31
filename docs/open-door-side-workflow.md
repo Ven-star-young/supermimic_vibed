@@ -54,10 +54,12 @@ robot_tracking
 + dt * angle_weight * exp(-(theta - theta_ref)^2 / angle_std^2)
 + dt * velocity_weight * exp(-(omega - omega_ref)^2 / velocity_std^2)
 + dt * contact_weight * phase(f) * exp(-d(S)^2 / contact_distance_std^2) * g(a(S))
-- dt * illegal_weight * max_forbidden [depth^2 / (depth^2 + penetration_scale^2)]
+- dt * illegal_weight * max_forbidden [intrusion^2 / (intrusion^2 + penetration_scale^2)]
 - dt * contact_penetration_weight * max_allowed [excess^2 / (excess^2 + penetration_scale^2)]
 ```
 
+非法区域使用 `intrusion=max(illegal_margin-signed_clearance,0)`；默认1cm内即开始惩罚，
+避免脚贴门施力而采样点尚未穿透时奖励为零。合法区域仍使用
 `depth=max(-signed_clearance,0)`，`excess=max(depth-contact_penetration_tolerance,0)`。
 距离针对门正面，靠门背面不会获得相同接近奖励；深穿透惩罚不受phase关闭影响。
 仿真和想象调用同一个SideDoorMDP.reward；MuJoCo接触力只用于评估。
@@ -69,7 +71,8 @@ robot_tracking
 | contact_weight | 0.25 | 允许区域接近奖励 |
 | contact_distance_std | 0.05 m | 当前状态接近尺度 |
 | reference_contact_std | 0.05 m | 参考阶段的平滑尺度 |
-| illegal_weight | 2 | 禁止区域穿透惩罚 |
+| illegal_weight | 2 | 禁止区域避让惩罚 |
+| illegal_margin | 0.01 m | 禁止区域到门的避让距离；0恢复旧穿透惩罚 |
 | contact_penetration_weight | 2 | 允许区域深穿透惩罚 |
 | contact_penetration_tolerance | 0.003 m | 允许区域的小量穿透容差 |
 | penetration_scale | 0.01 m | 有界惩罚尺度 |
@@ -134,9 +137,39 @@ WM、Actor、Critic更新；填充Replay不包含任何梯度更新。
 以后继续侧面训练使用正常 `resume=true`；完整resume优先，不再打开背部初始化文件，
 因此原文件移动或删除也不会阻止恢复已保存的侧面模型。
 
+## 从已有侧面策略微调避脚行为
+
+使用 [`configs/open_door_right_side_finetune.json`](../configs/open_door_right_side_finetune.json)：
+从侧面第10000轮模型载入Actor、WM及各自归一化统计，Critic和全部优化器重新初始化，
+迭代重新从0计数。保持非法权重2，仅增加1cm避让距离；合法接触区域和状态/网络维度不变。
+默认每卡3072环境、WM/Actor batch各512、学习率5e-5、2000轮，无WM-only阶段。
+
+```bash
+cd /home/wangfeng/supermimic_vibed
+mkdir -p logs/launch
+set -o pipefail
+CUDA_VISIBLE_DEVICES=1,2 ./run_open_door_side.sh \
+  --config configs/open_door_right_side_finetune.json \
+  --env.commands.motion.motion-dir data/motions/open_door_prepared/video6_g1_door_video45_right_side_asset.npz \
+  2>&1 | tee "logs/launch/side_clearance_finetune_$(date +%Y%m%d_%H%M%S).log"
+```
+
+`finetune_checkpoint` 和 `wm_checkpoint` 不能同时设置。显式微调仅允许同一侧面任务修改
+机器人/门奖励，仍检查状态、观测、接触定义、物性、网络和历史/goal长度；普通resume继续严格
+检查奖励。新checkpoint记录 `finetune_initialization`，并保留最初背部WM的来源记录。
+之后恢复微调结果用正常resume，不重新读取最初的侧面/背部文件。
+
+旧侧面checkpoint没有 `illegal_margin` 时视为0；评估会恢复旧奖励，不会因代码更新而改变
+旧模型的评分定义。新1cm配置不能直接完整resume旧奖励模型，应使用本节微调入口。
+这项改动让接触附近有梯度，不保证完全消除脚接触；需复查真实部位接触率和开门轨迹。
+
+本次微调入口已用实际侧面10000轮checkpoint验证：4环境、完整网络完成两轮eager训练，
+另完成一轮BF16/torch.compile训练，三者均更新且权重/统计有限。双进程测试覆盖一致加载、
+单卡Actor损坏时同步拒绝；回归测试覆盖旧奖励评估及新奖励微调后正常resume。
+
 ## 验证
 
-当前工作区全仓404项测试通过。CPU测试覆盖独立JSON和任务注册、实际碰撞表面/前臂FK、参考阶段、reward梯度和dt缩放、
+当前工作区全仓450项测试通过。CPU测试覆盖独立JSON和任务注册、实际碰撞表面/前臂FK、参考阶段、reward梯度和dt缩放、
 合法区域穿透容差、双向checkpoint拒绝、参数恢复及接触力分类。原背部几何/奖励测试也保留。
 本地4环境、完整网络完成2轮WM/Actor/Critic，保存后从新进程开启BF16/torch.compile续训到
 第3轮，网络权重和归一化统计均有限。侧面评估和轨迹导出通过；短训策略在第38个控制步

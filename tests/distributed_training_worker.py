@@ -226,7 +226,7 @@ def check_world_model_transfer(output):
         make_critic=lambda *args: torch.nn.Linear(4, 1),
         make_world_model=lambda *args: DoorWorldModel(hidden=(16,)),
         validate_model_coverage=lambda: None, checkpoint_metadata=lambda: metadata,
-        validate_world_model_checkpoint=validate)
+        validate_world_model_checkpoint=validate, validate_finetune_checkpoint=validate)
     source = DoorWorldModel(hidden=(16,))
     with torch.no_grad():
         for parameter in source.parameters():
@@ -271,7 +271,45 @@ def check_world_model_transfer(output):
             raise AssertionError("WM source failure did not reach every process")
         assert digest(fresh.wm) == before
         assert fresh.world_model_initialization is None
-    return dict(wm_transfer=state, wm_transfer_errors=errors)
+    finetune_path, bad_actor = output / "source_finetune.pt", output / "corrupt_actor.pt"
+    if distributed.primary():
+        checkpoint = torch.load(path, weights_only=False)
+        actor = torch.nn.Linear(4, 29)
+        with torch.no_grad():
+            for parameter in actor.parameters():
+                parameter.fill_(.456)
+        checkpoint.update(pi=actor.state_dict(), policy_config=runner.policy_config)
+        torch.save(checkpoint, finetune_path)
+        checkpoint["pi"]["weight"][0, 0] = float("nan")
+        torch.save(checkpoint, bad_actor)
+    dist.barrier()
+    target = make_runner(task=task)
+    target._init_training_models()
+    critic = digest(target.critic)
+    provenance = target.load_finetune(finetune_path)
+    assert (next(target.pi.parameters()) == .456).all()
+    assert digest(target.wm) == state["hash"]
+    assert digest(target.critic) == critic
+    assert not any(opt.state for opt in (target.opt_wm, target.opt_pi, target.opt_v))
+    assert target.current_learning_iteration == 0
+    finetune = {"provenance": provenance, "actor_hash": digest(target.pi), "wm_hash": digest(target.wm)}
+    assert distributed.gather_objects(finetune) == [finetune] * 2
+
+    fresh = make_runner(task=task)
+    fresh._init_training_models()
+    before = [digest(module) for module in (fresh.pi, fresh.wm, fresh.critic)]
+    try:
+        fresh.load_finetune(bad_actor if distributed.rank() == 1 else finetune_path)
+    except RuntimeError as exc:
+        actor_error = str(exc)
+        assert "rank 1:" in actor_error and "Invalid Actor tensor" in actor_error
+        assert distributed.gather_objects(actor_error) == [actor_error] * 2
+    else:
+        raise AssertionError("Invalid Actor did not block fine-tuning on every process")
+    assert [digest(module) for module in (fresh.pi, fresh.wm, fresh.critic)] == before
+    assert fresh.finetune_initialization is None
+    return dict(wm_transfer=state, wm_transfer_errors=errors,
+                finetune_transfer=finetune, finetune_error=actor_error)
 
 
 def main():

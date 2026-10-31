@@ -91,3 +91,6 @@ class TrackingTask:
 
     def validate_world_model_checkpoint(self, checkpoint):
         raise ValueError(f"Task {self.name} does not support world-model-only initialization")
+
+    def validate_finetune_checkpoint(self, checkpoint):
+        raise ValueError(f"Task {self.name} does not support Actor/world-model finetuning")
