@@ -137,8 +137,17 @@ def _select_surface_points(points, count, *, preserve_rear_heel=False):
     return points[chosen]
 
 
-@lru_cache(maxsize=4)
-def _surface_samples(body_names, samples_per_geom=32):
+def _forbidden_back_points(source, owner, points):
+    if source in ("torso_link", "logo_link"):
+        if owner != "torso_link":
+            raise ValueError("Torso contact patch must be expressed in the torso frame")
+        x, y, z = points.T
+        return ~((x < -.025) & (np.abs(y) < .13) & (z > .05) & (z < .38))
+    return np.ones(len(points), dtype=bool)
+
+
+@lru_cache(maxsize=8)
+def _surface_samples(body_names, samples_per_geom=32, point_filter=_forbidden_back_points):
     """Build <=960 samples from all 30 door-collidable geoms in this G1 asset.
 
     Physical ground-only foot spheres are excluded, while the full foot meshes
@@ -150,7 +159,6 @@ def _surface_samples(body_names, samples_per_geom=32):
     if not isinstance(samples_per_geom, int) or not 6 <= samples_per_geom <= 32:
         raise ValueError('samples_per_geom must be an integer between 6 and 32')
     model = make_g1_spec(interaction_collisions=True).compile()
-    torso = model.body('torso_link').id
     owners, sources, names, groups = [], [], [], []
     for geom_id in range(model.ngeom):
         if not model.geom_conaffinity[geom_id] & 2:
@@ -166,12 +174,7 @@ def _surface_samples(body_names, samples_per_geom=32):
             owner = int(model.body_parentid[owner])
             if owner == 0:
                 raise ValueError('Robot interaction geom is not attached to an FK body')
-        if body in (torso, model.body('logo_link').id):
-            if owner != torso:
-                raise ValueError('Torso contact patch must be expressed in the torso frame')
-            x, y, z = points.T
-            allowed = (x < -.025) & (np.abs(y) < .13) & (z > .05) & (z < .38)
-            points = points[~allowed]
+        points = points[point_filter(model.body(body).name, model.body(owner).name, points)]
         if not len(points):
             continue
         groups.append(_select_surface_points(
@@ -200,9 +203,9 @@ class DoorGeometry:
     surface approximation; a gap between samples can miss a small collision.
     """
 
-    def __init__(self, kin, metadata, device):
+    def __init__(self, kin, metadata, device, *, samples=None):
         self.kin = kin
-        self.samples = _surface_samples(tuple(kin.body_names))
+        self.samples = _surface_samples(tuple(kin.body_names)) if samples is None else samples
         self.body_ids = torch.tensor([kin.body_names.index(name) for name in self.samples.body_names],
                                      device=device)
         self.points = torch.tensor(self.samples.points, device=device)
@@ -231,18 +234,27 @@ class DoorGeometry:
         yaw = self.base_yaw + self.hinge_sign * S[6].squeeze(-1)
         torso_R = rotations[..., self.torso, :, :]
         back = positions[..., self.torso, :] + (torso_R @ self.back_offset)
-        local_back = self._local(back, yaw)
         # Distance to a finite face, not an infinite plane or the nearer side
         # of the box; the opposite face does not grant legal-back shaping.
-        distance_sq = ((local_back[..., 0] - self.half[0]).square()
-                       + (local_back[..., 1:].abs() - self.half[1:]).clamp_min(0).square().sum(-1))
+        distance_sq = self.face_distance_sq(back, yaw)
         normal = torch.stack((yaw.cos(), yaw.sin(), torch.zeros_like(yaw)), -1)
         alignment = (torso_R[..., :, 0] * normal).sum(-1)
-        world = (torch.einsum("...gij,gsj->...gsi", rotations[..., self.body_ids, :, :], self.points)
-                 + positions[..., self.body_ids, :].unsqueeze(-2))
-        excess = self._local(world, yaw).abs() - self.half
-        clearance = (torch.linalg.vector_norm(excess.clamp_min(0), dim=-1)
-                     + excess.amax(-1).clamp_max(0))
+        world = self.surface_world_points(positions, rotations)
+        clearance = self.panel_clearance(world, yaw)
         clearance = clearance.masked_fill(~self.valid, torch.inf).amin(-1)
         return {"back_distance_sq": distance_sq, "alignment": alignment,
                 "illegal_clearance": clearance}
+
+    def surface_world_points(self, positions, rotations):
+        return (torch.einsum("...gij,gsj->...gsi", rotations[..., self.body_ids, :, :], self.points)
+                + positions[..., self.body_ids, :].unsqueeze(-2))
+
+    def face_distance_sq(self, points, yaw):
+        local = self._local(points, yaw)
+        return ((local[..., 0] - self.half[0]).square()
+                + (local[..., 1:].abs() - self.half[1:]).clamp_min(0).square().sum(-1))
+
+    def panel_clearance(self, points, yaw):
+        excess = self._local(points, yaw).abs() - self.half
+        return (torch.linalg.vector_norm(excess.clamp_min(0), dim=-1)
+                + excess.amax(-1).clamp_max(0))

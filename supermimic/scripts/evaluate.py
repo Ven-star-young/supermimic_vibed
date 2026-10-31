@@ -163,10 +163,14 @@ def _restore_open_door_config(cfg, checkpoint):
     checks the complete task schema against the resulting environment.
     """
     from supermimic.tasks.open_door.commands import DoorCommandCfg
+    from supermimic.tasks.open_door_side.commands import SideDoorCommandCfg
 
     command, metadata = cfg.commands["motion"], checkpoint.get("task") or {}
-    if not isinstance(command, DoorCommandCfg) or metadata.get("name") != "g1_open_door":
+    if not isinstance(command, DoorCommandCfg):
         return
+    expected = "g1_open_door_side" if isinstance(command, SideDoorCommandCfg) else "g1_open_door"
+    if metadata.get("name") != expected:
+        raise ValueError(f"OpenDoor checkpoint task mismatch: expected {expected}, got {metadata.get('name')}")
     if metadata.get("schema_version") != 2:
         raise ValueError("OpenDoor checkpoint schema mismatch: fixed-physics checkpoints cannot "
                          "implicitly adopt the new door randomization distribution")
@@ -217,7 +221,10 @@ def score_checkpoint(path: Path, args):
     try:
         if "door" in native.scene.entities:
             from supermimic.tasks.open_door.evaluation import DoorContactMetrics
-            metrics = DoorContactMetrics(native)
+            from supermimic.tasks.open_door_side.commands import SideDoorCommandCfg
+            from supermimic.tasks.open_door_side.evaluation import SideDoorContactMetrics
+            metrics_cls = SideDoorContactMetrics if isinstance(cfg.commands["motion"], SideDoorCommandCfg) else DoorContactMetrics
+            metrics = metrics_cls(native)
         env = RslRlVecEnvWrapper(native)
         runner = load_runner_cls(args.task)(env, asdict(load_rl_cfg(args.task)), device=args.device)
         runner.load(str(path), load_cfg={"actor": True}, map_location=args.device)

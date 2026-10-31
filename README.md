@@ -4,7 +4,7 @@
 Differentiable World Model* ([arXiv:2610.28480](https://arxiv.org/abs/2610.28480)).
 Original implementation: **Chong Zhang** (ETH Zurich). Code license: [MIT](LICENSE).
 
-这个分支按任务类别组织网络。Tracking、Sitting 和 OpenDoor 各自拥有 Actor、WM、Critic；
+这个分支按任务类别组织网络。Tracking、Sitting、OpenDoor 和 OpenDoorSide 各自拥有 Actor、WM、Critic；
 共同复用真实 Replay、WM 拟合、可微分想象和 Critic 更新代码。Sitting 的目标是
 学习该类任务中的机器人–椅子动力学，帮助训练策略；收敛和未见椅型表现需要实验评价。
 
@@ -18,6 +18,7 @@ Original implementation: **Chong Zhang** (ETH Zurich). Code license: [MIT](LICEN
 | Tracking | 93 | 962→29 | 133→70 | 914→1 |
 | Sitting | 102 | 1116→29 | 224→82 | 1101→1 |
 | OpenDoor（背部跟踪） | 102 | 1052→29 | 152→72 | 955→1 |
+| OpenDoorSide（右侧跟踪） | 102 | 1052→29 | 152→72 | 955→1 |
 
 默认历史和未来参考各10帧。Sitting 每个环境只有一把椅子；不同环境可以使用
 不同椅型，采用固定平衡分配，不周期性关闭重建场景。1024×6的资产局部点云编码为
@@ -27,6 +28,7 @@ Original implementation: **Chong Zhang** (ETH Zurich). Code license: [MIT](LICEN
 - [模型维度、坐标系和优化路径](docs/task-specific-sitting-design.md)
 - [reference选择、训练配置、多卡、部署](docs/sitting-workflow.md)
 - [OpenDoor数据适配、统一状态奖励与训练](docs/open-door-workflow.md)
+- [OpenDoorSide独立配置、右侧接触奖励与训练](docs/open-door-side-workflow.md)
 - [数据源转换、纯运动学回放、碰撞资产](docs/motion-and-assets.md)
 - [实现契约](CONTEXT.md)
 
@@ -38,6 +40,7 @@ supermimic/rl/                 训练循环、Replay、多卡、归一化与几�
 supermimic/tasks/g1_tracking/  Tracking网络与任务
 supermimic/tasks/sitting/      Sitting网络、动力学、场景和混合椅型实验
 supermimic/tasks/open_door/    G1＋被动铰链轨迹跟踪，复用Tracking网络与Runner
+supermimic/tasks/open_door_side/ 右侧躯干／肩／前臂开门，独立奖励和checkpoint
 supermimic/scripts/            train_sitting / play_policy / evaluate
 ```
 
@@ -114,6 +117,22 @@ CUDA_VISIBLE_DEVICES=1,2 ./run_open_door.sh --config configs/open_door.json
 真实与想象使用同一个state-based reward，MuJoCo接触只用于评估。
 原始参考含穿模，保留源数据并默认使用穿透惩罚；硬穿透终止可配置。
 完整命令、维度和奖励公式见[OpenDoor工作流](docs/open-door-workflow.md)。
+
+## 右侧开门跟踪
+
+独立任务 `Mjlab-SuperMimic-OpenDoorSide-Unitree-G1`，参数放在
+[`configs/open_door_right_side.json`](configs/open_door_right_side.json)。默认只选video6，
+允许右侧躯干、右肩和右前臂参与推门；参考接近程度控制接触奖励，合法部位的深穿透也受惩罚。
+
+```bash
+./run_open_door_side.sh --check
+CUDA_VISIBLE_DEVICES=1,2 ./run_open_door_side.sh
+```
+
+与背部任务共享网络实现、RSI、门物性随机化和Runner，但独立训练参数与checkpoint。
+输出在 `logs/rsl_rl/supermimic_open_door_side/`，不兼容背部任务直接续训。
+轨迹须包含 `door_contact_region="right_side"`；混入背部数据会报错。
+使用环境变量指定服务器数据时，应给侧面单个NPZ路径。详见[侧面工作流](docs/open-door-side-workflow.md)。
 
 ## 部署与验证
 

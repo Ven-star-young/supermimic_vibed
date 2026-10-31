@@ -5,6 +5,7 @@ from dataclasses import asdict, replace
 
 import torch
 
+from motion_data import load_motion
 from ...assets.g1.g1_constants import G1_JOINT_NAMES
 from ...assets.g1.kinematics import G1Kinematics
 from ..base import TrackingTask
@@ -18,6 +19,20 @@ from .assets import select_motion_files
 
 
 class OpenDoorTask(TrackingTask):
+    task_name = "g1_open_door"
+    geometry_cls = DoorGeometry
+    mdp_cls = DoorMDP
+
+    @staticmethod
+    def select_motion_files(command):
+        files = select_motion_files(command)
+        for path in files:
+            region = load_motion(path).get("door_contact_region")
+            # Legacy back references predate the explicit contact-region label.
+            if region is not None and (region.shape != () or region.item() != "back"):
+                raise ValueError(f"{path}: back-opening task cannot load a different door_contact_region")
+        return files
+
     def make_policy(self, history_length, goal_frames, geometry_bank=None):
         return Policy(history_length=history_length, goal_frames=goal_frames)
 
@@ -71,7 +86,8 @@ class OpenDoorTask(TrackingTask):
         super().validate_checkpoint(checkpoint)
 
 
-def build_task(motion_dir=None, *, device="cuda:0", play=False, motion=None, kin=None, cfg=None):
+def build_task(motion_dir=None, *, device="cuda:0", play=False, motion=None, kin=None, cfg=None,
+               task_cls=OpenDoorTask):
     if cfg is None:
         from .env_cfgs import make_env_cfg
         cfg = make_env_cfg(play)
@@ -80,7 +96,7 @@ def build_task(motion_dir=None, *, device="cuda:0", play=False, motion=None, kin
     kin = G1Kinematics(device) if kin is None else kin
     if motion is None:
         selected = replace(command, motion_dir=motion_dir) if motion_dir is not None else command
-        motion = DoorMotionLib(select_motion_files(selected), kin, device)
+        motion = DoorMotionLib(task_cls.select_motion_files(selected), kin, device)
     joints = cfg.scene.entities["robot"].init_state.joint_pos
     defaults = []
     for name in G1_JOINT_NAMES:
@@ -91,13 +107,13 @@ def build_task(motion_dir=None, *, device="cuda:0", play=False, motion=None, kin
         defaults.append(value)
     metadata = motion.door_metadata
     dynamics = DoorDynamics(float(metadata["base_yaw"]), float(metadata["joint_axis"][2]))
-    geometry = DoorGeometry(kin, metadata, device)
-    mdp = DoorMDP(
+    geometry = task_cls.geometry_cls(kin, metadata, device)
+    mdp = task_cls.mdp_cls(
         kin, motion, torch.tensor(defaults, device=device), cfg=command.reward_cfg,
         observation_cfg=command.observation_cfg, termination_cfg=command.termination_cfg,
         control_dt=cfg.sim.mujoco.timestep * cfg.decimation,
         door_reward_cfg=command.door_reward_cfg,
         dynamics=dynamics, geometry=geometry,
     )
-    return OpenDoorTask("g1_open_door", motion, mdp, dynamics, cfg,
-                        modeled_entities=("robot", "door"))
+    return task_cls(task_cls.task_name, motion, mdp, dynamics, cfg,
+                    modeled_entities=("robot", "door"))

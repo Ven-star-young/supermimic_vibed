@@ -25,5 +25,5 @@ for mapping in \
   fi
 done
 
-exec "${TRAIN_PYTHON:-.venv/bin/python}" -m supermimic.scripts.train_open_door \
+exec "${TRAIN_PYTHON:-.venv/bin/python}" -m "${TRAIN_MODULE:-supermimic.scripts.train_open_door}" \
   "${overrides[@]}" "$@"

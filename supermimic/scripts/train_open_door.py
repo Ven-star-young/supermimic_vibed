@@ -46,13 +46,13 @@ def _arguments(values, defaults, prefix):
     return args
 
 
-def build_config(path, overrides=()):
+def build_config(path, overrides=(), *, task_id=TASK_ID):
     values = json.loads(Path(path).read_text())
     if not isinstance(values, dict) or set(values) - {"task", "training"}:
         raise ValueError("Configuration must contain only task and training objects")
     if not all(isinstance(values.get(key, {}), dict) for key in ("task", "training")):
         raise ValueError("task and training must be JSON objects")
-    defaults = TrainConfig.from_task(TASK_ID)
+    defaults = TrainConfig.from_task(task_id)
     task, training = dict(values.get("task", {})), dict(values.get("training", {}))
     args = []
     if "episode_length_s" in task:
@@ -89,22 +89,22 @@ def config_summary(cfg):
                      **asdict(cfg.env.commands["motion"])}, "training": training}
 
 
-def main(argv=None):
+def main(argv=None, *, task_id=TASK_ID, default_config=DEFAULT_CONFIG):
     parser = argparse.ArgumentParser(description=__doc__, epilog=(
         "Additional --env.*, --agent.*, --gpu-ids and --log-root arguments override the JSON."))
-    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    parser.add_argument("--config", type=Path, default=default_config)
     parser.add_argument("--check", action="store_true", help="Print the effective configuration without simulation")
     args, overrides = parser.parse_known_args(argv)
     try:
-        cfg = build_config(args.config, overrides)
+        cfg = build_config(args.config, overrides, task_id=task_id)
     except (ValueError, TypeError, OSError) as exc:
         parser.error(str(exc))
     if args.check:
         print(json.dumps(config_summary(cfg), indent=2, ensure_ascii=False))
         return
-    print(f"[OpenDoor] config={args.config.resolve()} | {cfg.env.scene.num_envs} envs/GPU | "
+    print(f"[{task_id}] config={args.config.resolve()} | {cfg.env.scene.num_envs} envs/GPU | "
           f"WM batch={cfg.agent.wm_batch}, Actor batch={cfg.agent.pi_batch} per GPU", flush=True)
-    launch_training(TASK_ID, cfg)
+    launch_training(task_id, cfg)
 
 
 if __name__ == "__main__":

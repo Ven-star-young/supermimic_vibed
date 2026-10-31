@@ -16,6 +16,14 @@ class DoorContactMetrics:
     This establishes measured contact, not which contact caused opening torque.
     """
 
+    allowed_rate_key = "allowed_back_substep_rate"
+
+    def region_metadata(self):
+        return {"back_region_torso_m": dict(x_max=-.025, abs_y_max=.13, z_min=.05, z_max=.38)}
+
+    def classify_contacts(self, local, robot_geom):
+        return back_contact_region(local, self.back_geom[robot_geom])
+
     def __init__(self, native):
         self.sim = native.sim
         model, device = self.sim.mj_model, native.device
@@ -85,7 +93,7 @@ class DoorContactMetrics:
                      (contact.pos[ids] - data.xpos[worlds, self.torso]).unsqueeze(-1)).squeeze(-1)
             if not bool(torch.isfinite(forces).all() & torch.isfinite(local).all()):
                 raise FloatingPointError("Nonfinite door contact force or position")
-            allowed = back_contact_region(local, self.back_geom[robot[ids]])
+            allowed = self.classify_contacts(local, robot[ids])
             normal = forces[:, 0].clamp_min(0)
             totals[:, 0].scatter_add_(0, worlds, normal * allowed)
             totals[:, 1].scatter_add_(0, worlds, normal * ~allowed)
@@ -101,11 +109,11 @@ class DoorContactMetrics:
             source="mujoco_warp.contact_force immediately after each physics step",
             scope="executed_prefix_only; normal force summed per category and world",
             normal_force_threshold_n=1.,
-            back_region_torso_m=dict(x_max=-.025, abs_y_max=.13, z_min=.05, z_max=.38),
-            allowed_back_substep_rate=float(totals[0]), forbidden_door_substep_rate=float(totals[1]),
+            **self.region_metadata(),
+            **{self.allowed_rate_key: float(totals[0])}, forbidden_door_substep_rate=float(totals[1]),
             n_episodes_with_forbidden_contact=int(self.ever_forbidden.sum()),
             per_env=[dict(observed_substeps=int(self.samples[i]),
-                          allowed_back_substep_rate=float(rates[i, 0]),
+                          **{self.allowed_rate_key: float(rates[i, 0])},
                           forbidden_door_substep_rate=float(rates[i, 1]),
                           ever_forbidden_contact=bool(self.ever_forbidden[i]))
                      for i in range(len(self.samples))])

@@ -44,11 +44,12 @@ def randomized_door(cuda_device):
     from mjlab.envs import ManagerBasedRlEnv
     from supermimic.rl.vecenv import ReplayEnvAdapter
     from supermimic.tasks.open_door.env_cfgs import make_env_cfg
-    if not list(DEFAULT_MOTION_DIR.glob("*.npz")):
+    motion_file = DEFAULT_MOTION_DIR / "video1_g1_door_video45_centered_asset.npz"
+    if not motion_file.is_file():
         pytest.skip("Convert the supplied OpenDoor motion first")
     cfg = make_env_cfg(play=False)
     cfg.scene.num_envs, cfg.scene.env_spacing, cfg.auto_reset = 4, 2.5, False
-    cfg.commands["motion"].motion_dir = str(DEFAULT_MOTION_DIR)
+    cfg.commands["motion"].motion_dir = str(motion_file)
     cfg.commands["motion"].reset_noise = False
     env = ManagerBasedRlEnv(cfg, device=cuda_device)
     try:

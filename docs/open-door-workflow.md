@@ -4,6 +4,9 @@
 Runner、Replay、PD 控制和 reference clock；网络复用 Tracking 的 MLP，分别训练参数。
 控制 50 Hz、物理 200 Hz、10 帧历史、10 帧未来目标。门是被动铰链，没有 actuator。
 
+右侧躯干／肩／前臂开门是独立的OpenDoorSide任务，见[侧面工作流](open-door-side-workflow.md)。
+背部JSON默认显式选择video1，侧面JSON显式选择video6，避免同目录自动混合两种奖励语义。
+
 ## 数据适配
 
 来源处理放在已有 `motion_data/converters/`，本次增加 `gmr.py`：

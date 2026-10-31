@@ -33,7 +33,7 @@
     "load_checkpoint": "model_.*.pt"
   },
   "task": {
-    "motion_dir": "data/motions/open_door_prepared",
+    "motion_dir": "data/motions/open_door_prepared/video1_g1_door_video45_centered_asset.npz",
     "door_xml": null,
     "history_length": 10,
     "goal_frames": 10,

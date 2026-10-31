@@ -1,7 +1,7 @@
 # Task-specific learning contracts
 
 This branch trains a separate Actor, World Model and Critic per task family.
-Tracking, Sitting and OpenDoor share optimization machinery, not model parameters or a cross-task
+Tracking, Sitting, OpenDoor and OpenDoorSide share optimization machinery, not model parameters or a cross-task
 state schema. Sitting contains exactly G1 + one free rigid chair per environment.
 Different worlds may use different native chair variants and matching references.
 OpenDoor tracks a synchronized G1 and passive -Z hinge reference using fixed door geometry
@@ -123,6 +123,18 @@ hinge friction0.25–0.75Nm, spring stiffness10–30Nm/rad and robot-door fricti
 per environment/reset. Inertia scales with mass; native model and Replay context update
 together. Play/eval use nominal8kg/5/0.5/20/0.7; spring reference stays−0.1rad and geometry
 is unchanged. `door_randomization_cfg.enabled=False` uses nominal physics in training too.
+
+OpenDoorSide is a separate task (g1_open_door_side), with its own registration,
+reward config, experiment directory and checkpoint semantics. It reuses OpenDoor
+state/dynamics/models/DR/RSI. Allowed contact is the right torso patch plus right
+shoulder-pitch/roll and elbow/wrist-roll shells; right upper arm and hand remain
+forbidden. Tensor rewards and physical force diagnostics share this definition.
+Contact shaping uses the nearest permitted FK surface to the finite positive door
+face, torso +Y alignment, and a smooth phase from reference surface proximity.
+Permitted surfaces still receive a penetration cost beyond 3mm. Actual/imagined
+reward is the same state function. All selected NPZs must say right_side; reference
+geometry phase is computed on the robot/hinge control clock, without force labels.
+See docs/open-door-side-workflow.md. JSON defaults explicitly select each task's clip.
 
 One simulator and Replay per rank; gradients average before clipping; initial parameters
 broadcast; normalizer statistics use global samples. Buffers/batches/environment counts

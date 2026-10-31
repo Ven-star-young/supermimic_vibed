@@ -19,11 +19,12 @@ def door_runner(cuda_device):
     from mjlab.tasks.registry import load_env_cfg, load_rl_cfg, load_runner_cls
     from supermimic.rl.runner import SuperMimicRunner
 
-    if not list(DEFAULT_MOTION_DIR.glob("*.npz")):
+    motion_file = DEFAULT_MOTION_DIR / "video1_g1_door_video45_centered_asset.npz"
+    if not motion_file.is_file():
         pytest.skip("Convert the supplied OpenDoor motion with motion_data.converters.gmr first")
     cfg = load_env_cfg(TASK, play=True)
     cfg.scene.num_envs, cfg.scene.env_spacing, cfg.auto_reset = 4, 2.5, False
-    cfg.commands["motion"].motion_dir = str(DEFAULT_MOTION_DIR)
+    cfg.commands["motion"].motion_dir = str(motion_file)
     cfg.commands["motion"].reset_noise = False
     # Non-default values catch an asset factory that ignores command overrides.
     cfg.commands["motion"].door_mass = 9.5
