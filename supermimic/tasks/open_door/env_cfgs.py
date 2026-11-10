@@ -9,6 +9,7 @@ from mjlab.entity import EntityCfg
 from mjlab.managers.event_manager import EventTermCfg
 
 from ...assets.g1.g1_constants import make_g1_robot_cfg
+from ...tactile import G1TactileSensorCfg
 from ..g1_tracking.env_cfgs import make_env_cfg as make_tracking_env_cfg
 from .assets import DEFAULT_MOTION_DIR, configure_scene, make_door_spec
 from .commands import DoorCommandCfg
@@ -42,4 +43,6 @@ def make_env_cfg(play=False):
     command.motion_dir = os.environ.get("SUPERMIMIC_MOTION_DIR", str(DEFAULT_MOTION_DIR))
     baseline.commands["motion"] = command
     baseline.scene.entities["robot"] = make_g1_robot_cfg(interaction_collisions=True)
+    baseline.scene.sensors += (G1TactileSensorCfg(
+        name="tactile", robot_entity="robot", target_entity="door"),)
     return DoorEnvCfg(**vars(baseline))

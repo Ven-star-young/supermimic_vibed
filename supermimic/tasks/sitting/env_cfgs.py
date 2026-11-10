@@ -12,6 +12,7 @@ from mjlab.managers.observation_manager import ObservationGroupCfg, ObservationT
 
 from ...assets import DATA_DIR
 from ...assets.g1.g1_constants import make_g1_robot_cfg
+from ...tactile import G1TactileSensorCfg
 from ..g1_tracking.env_cfgs import make_env_cfg as make_tracking_env_cfg
 from .assets import make_chair_spec
 from .commands import SittingCommandCfg, geometry_id
@@ -72,4 +73,6 @@ def make_env_cfg(play=False):
     command.motion_dir = os.environ.get("SUPERMIMIC_MOTION_DIR", str(DATA_DIR / "motions" / "sitting"))
     baseline.commands["motion"] = command
     baseline.scene.entities["robot"] = make_g1_robot_cfg(interaction_collisions=True)
+    baseline.scene.sensors += (G1TactileSensorCfg(
+        name="tactile", robot_entity="robot", target_entity="chair"),)
     return SittingEnvCfg(**vars(baseline))

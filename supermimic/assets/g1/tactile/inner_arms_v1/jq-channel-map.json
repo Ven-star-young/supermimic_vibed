@@ -1,0 +1,1435 @@
+{
+  "schema": "wbt.jq-channel-map/v1",
+  "status": "derived_inner_arm_geometry_original_channel_membership",
+  "review": {
+    "status": "pending_inner_layout_visual_review",
+    "original_channel_membership_preserved": true,
+    "physical_wiring_validated": false,
+    "note": "User requested historical inner-arm geometry; original outer-layout visual approval does not transfer to this placement."
+  },
+  "geometry_sha256": "bc4db6984191a706f2c1062a41040e2e3339c0a2808d133011e4f6dc6903ac05",
+  "model": {
+    "urdf": "g1_29dof_mode_15.urdf",
+    "urdf_sha256": "80fc328761b0d0a502d675106c234eceabb70fa09c9f7d5cbcb40c2955629bac",
+    "mesh_sha256": {
+      "meshes/pelvis_ver0529.STL": "9a249feb95d632aa648cd07757b2ccce6da36723875e7630fa75d66a4ae8f036",
+      "meshes/left_hip_pitch_link.STL": "4725168105ee768ee31638ef22b53f6be2d7641bfd7cfefe803488d884776fa4",
+      "meshes/left_hip_roll_link.STL": "91f25922ee8a7c3152790051bebad17b4d9cd243569c38fe340285ff93a97acf",
+      "meshes/left_hip_yaw_link.STL": "a16d88aa6ddac8083aa7ad55ed317bea44b1fa003d314fba88965b7ed0f3b55b",
+      "meshes/left_knee_link.STL": "8d92b9e3d3a636761150bb8025e32514c4602b91c7028d523ee42b3e632de477",
+      "meshes/left_ankle_pitch_link.STL": "d49e3abc6f5b12e532062cd575b87b5ef40cd2a3fc18f54a1ca5bba4f773d51d",
+      "meshes/left_ankle_roll_link.STL": "c4092af943141d4d9f74232f3cfa345afc6565f46a077793b8ae0e68b39dc33f",
+      "meshes/right_hip_pitch_link.STL": "e4f3c99d7f4a7d34eadbef9461fc66e3486cb5442db1ec50c86317d459f1a9c6",
+      "meshes/right_hip_roll_link.STL": "4c254ef66a356f492947f360dd931965477b631e3fcc841f91ccc46d945d54f6",
+      "meshes/right_hip_yaw_link.STL": "e479c2936ca2057e9eb2f7dff6c189b7419d7b8484dea0b298cbb36a2a6aa668",
+      "meshes/right_knee_link.STL": "63c4008449c9bbe701a6e2b557b7a252e90cf3a5abcf54cee46862b9a69f8ec8",
+      "meshes/right_ankle_pitch_link.STL": "15be426539ec1be70246d4d82a168806db64a41301af8b35c197a33348c787a9",
+      "meshes/right_ankle_roll_link.STL": "4b66222ea56653e627711b56d0a8949b4920da5df091da0ceb343f54e884e3a5",
+      "meshes/waist_yaw_link_rev_1_0.STL": "ec6db442b11f25eed898b5add07940c85d804f300de24dcbd264ccd8be7d554c",
+      "meshes/waist_roll_link_rev_1_0.STL": "b67c347a05abc3e8ddae600d98a082bee273bb39f8e651647708b0a7140a8a97",
+      "meshes/torso_link_rev_1_0.STL": "11ddb46f2098efbbd8816b1d65893632d8e78be936376c7cdcd6771899ccc723",
+      "meshes/logo_link.STL": "8571a0a19bc4916fa55f91449f51d5fdefd751000054865a842449429d5f155b",
+      "meshes/head_link.STL": "005fb67fbd3eff94aa8bf4a6e83238174e9f91b6721f7111594322f223724411",
+      "meshes/left_shoulder_pitch_link.STL": "f0d1cfd02fcf0d42f95e678eeca33da3afbcc366ffba5c052847773ec4f31d52",
+      "meshes/left_shoulder_roll_link.STL": "fb9df21687773522598dc384f1a2945c7519f11cbc8bd372a49170316d6eee88",
+      "meshes/left_shoulder_yaw_link.STL": "1aa97e9748e924336567992181f78c7cd0652fd52a4afcca3df6b2ef6f9e712e",
+      "meshes/left_elbow_link.STL": "fa752198accd104d5c4c3a01382e45165b944fbbc5acce085059223324e5bed3",
+      "meshes/left_wrist_roll_link_5010.STL": "b5be0d8d17b6db9f74323049ce6a0b8a7d95b2434a34805650cc22050f4992dd",
+      "meshes/left_wrist_pitch_link_5010.STL": "65c91c4681228f28ccb73d9fc7e853bc1c857da199352321e834e15f2cd7a7d4",
+      "meshes/left_wrist_yaw_link_5010.STL": "d020b9ef67b0899c98b77029d8de80a820c16dba0b7611d0cd7f85033d9241f1",
+      "meshes/left_rubber_hand.STL": "cff2221a690fa69303f61fce68f2d155c1517b52efb6ca9262dd56e0bc6e70fe",
+      "meshes/right_shoulder_pitch_link.STL": "24cdb387e0128dfe602770a81c56cdce3a0181d34d039a11d1aaf8819b7b8c02",
+      "meshes/right_shoulder_roll_link.STL": "962b97c48f9ce9e8399f45dd9522e0865d19aa9fd299406b2d475a8fc4a53e81",
+      "meshes/right_shoulder_yaw_link.STL": "a0b76489271da0c72461a344c9ffb0f0c6e64f019ea5014c1624886c442a2fe5",
+      "meshes/right_elbow_link.STL": "1be925d7aa268bb8fddf5362b9173066890c7d32092c05638608126e59d1e2ab",
+      "meshes/right_wrist_roll_link_5010.STL": "458d62c3fcb63f526cd258397c7ac88350d50fd444f35646054cb0e2015a2042",
+      "meshes/right_wrist_pitch_link_5010.STL": "ac1110adfd93a10396bd32bba7b71ded5ccd757405b9e6d3d0b4ff53dea09582",
+      "meshes/right_wrist_yaw_link_5010.STL": "fe36d6fe3f09fb0bb27bf3027b4c388110505d3f46678b80afe2e198a5ea7922",
+      "meshes/right_rubber_hand.STL": "99533b778bca6246144fa511bb9d4e555e075c641f2a0251e04372869cd99d67"
+    }
+  },
+  "channel_abi_sha256": "8fc5cae05ff513c7372dd632cb637c7151d1d4902a43fcca40dc9e2ebed70c42",
+  "jq_skin_commit": "da8a2feb1b3be1ee3b694ad9ab3221d554010aa1",
+  "official_pages": [
+    16,
+    17,
+    18
+  ],
+  "inspected_on": "2026-09-16",
+  "channels": [
+    {
+      "state_index": 0,
+      "zone": "chest",
+      "zone_index": 0,
+      "raw_index_1based": 195,
+      "point_ids": [
+        "p_98e7fa0c0617",
+        "p_e28848b99298",
+        "p_4c2b94e56f58",
+        "p_8f8855a517a1"
+      ]
+    },
+    {
+      "state_index": 1,
+      "zone": "chest",
+      "zone_index": 1,
+      "raw_index_1based": 211,
+      "point_ids": [
+        "p_c2ed9f0d3c30",
+        "p_97969b6805c4",
+        "p_17b5728378dd",
+        "p_31e89dd06d6a"
+      ]
+    },
+    {
+      "state_index": 2,
+      "zone": "chest",
+      "zone_index": 2,
+      "raw_index_1based": 227,
+      "point_ids": [
+        "p_f0ebe947a642",
+        "p_fde7c84a4b93",
+        "p_24f6c0f22cd4",
+        "p_db8202f8ce50"
+      ]
+    },
+    {
+      "state_index": 3,
+      "zone": "chest",
+      "zone_index": 3,
+      "raw_index_1based": 243,
+      "point_ids": [
+        "p_1e4977302cc5",
+        "p_ccc38b4e2882",
+        "p_473a40559bb6",
+        "p_d771c528b6f0"
+      ]
+    },
+    {
+      "state_index": 4,
+      "zone": "chest",
+      "zone_index": 4,
+      "raw_index_1based": 3,
+      "point_ids": [
+        "p_28205f611c49",
+        "p_d1ffafecfad4",
+        "p_5299c7564f6e",
+        "p_62a2efe2d405"
+      ]
+    },
+    {
+      "state_index": 5,
+      "zone": "chest",
+      "zone_index": 5,
+      "raw_index_1based": 19,
+      "point_ids": [
+        "p_ec625d644c72",
+        "p_aa80dfad89aa",
+        "p_11aefffe5000",
+        "p_263f3cd84924"
+      ]
+    },
+    {
+      "state_index": 6,
+      "zone": "chest",
+      "zone_index": 6,
+      "raw_index_1based": 35,
+      "point_ids": [
+        "p_6d4932c949cf",
+        "p_c2f651c9a999",
+        "p_a07c26ed48d8",
+        "p_acf915d87831"
+      ]
+    },
+    {
+      "state_index": 7,
+      "zone": "chest",
+      "zone_index": 7,
+      "raw_index_1based": 51,
+      "point_ids": [
+        "p_27ac3ad2aed9",
+        "p_457f17194c69",
+        "p_5bf8379f4eb4",
+        "p_b0d04df9f835"
+      ]
+    },
+    {
+      "state_index": 8,
+      "zone": "chest",
+      "zone_index": 8,
+      "raw_index_1based": 196,
+      "point_ids": [
+        "p_bfe3ae7a2307",
+        "p_ebad4924902a",
+        "p_96b3bae38641",
+        "p_d63df123875e"
+      ]
+    },
+    {
+      "state_index": 9,
+      "zone": "chest",
+      "zone_index": 9,
+      "raw_index_1based": 212,
+      "point_ids": [
+        "p_cf6fb4001179",
+        "p_cbe47f39bcdb",
+        "p_6e67d86c7764",
+        "p_c8367e5102ab"
+      ]
+    },
+    {
+      "state_index": 10,
+      "zone": "chest",
+      "zone_index": 10,
+      "raw_index_1based": 228,
+      "point_ids": [
+        "p_7ed227b7c5cd",
+        "p_31fdedfad3e0",
+        "p_13386429b063",
+        "p_8c3157cd400f"
+      ]
+    },
+    {
+      "state_index": 11,
+      "zone": "chest",
+      "zone_index": 11,
+      "raw_index_1based": 244,
+      "point_ids": [
+        "p_6ad245fed396",
+        "p_c70a1a7148a8",
+        "p_86f305bb5b9e",
+        "p_8ee43df17a02"
+      ]
+    },
+    {
+      "state_index": 12,
+      "zone": "chest",
+      "zone_index": 12,
+      "raw_index_1based": 4,
+      "point_ids": [
+        "p_31de455d67b2",
+        "p_ca432e5c5223",
+        "p_65ec3da0db64",
+        "p_ffb35d5033d1"
+      ]
+    },
+    {
+      "state_index": 13,
+      "zone": "chest",
+      "zone_index": 13,
+      "raw_index_1based": 20,
+      "point_ids": [
+        "p_b967c38bc45d",
+        "p_363fae329abe",
+        "p_eec9565a48a1",
+        "p_d14c384e96c5"
+      ]
+    },
+    {
+      "state_index": 14,
+      "zone": "chest",
+      "zone_index": 14,
+      "raw_index_1based": 36,
+      "point_ids": [
+        "p_ae17875321c5",
+        "p_c3a04e24ead4",
+        "p_7fb2ec9a8424",
+        "p_9e64df6ea1c5"
+      ]
+    },
+    {
+      "state_index": 15,
+      "zone": "chest",
+      "zone_index": 15,
+      "raw_index_1based": 52,
+      "point_ids": [
+        "p_f12bb8f8cdb7",
+        "p_38c15713fd55",
+        "p_b7ffc7bef1bc",
+        "p_56a67260d02e"
+      ]
+    },
+    {
+      "state_index": 16,
+      "zone": "chest",
+      "zone_index": 16,
+      "raw_index_1based": 197,
+      "point_ids": [
+        "p_aec648a318c9",
+        "p_1bbbdd8ba656",
+        "p_dd39ae2155dc",
+        "p_641ee5be1428"
+      ]
+    },
+    {
+      "state_index": 17,
+      "zone": "chest",
+      "zone_index": 17,
+      "raw_index_1based": 213,
+      "point_ids": [
+        "p_bf1022f41a78",
+        "p_0af50fae0e4c",
+        "p_bb0370ae7825",
+        "p_e7876341dcc3"
+      ]
+    },
+    {
+      "state_index": 18,
+      "zone": "chest",
+      "zone_index": 18,
+      "raw_index_1based": 229,
+      "point_ids": [
+        "p_5e2afce96402",
+        "p_a0ea9e9ccf07",
+        "p_fb38369df24d",
+        "p_17780de5587d"
+      ]
+    },
+    {
+      "state_index": 19,
+      "zone": "chest",
+      "zone_index": 19,
+      "raw_index_1based": 245,
+      "point_ids": [
+        "p_3b496c85222b",
+        "p_1a06cb3e291b",
+        "p_db6ee5d6e9cd",
+        "p_b00b9bd7db1c"
+      ]
+    },
+    {
+      "state_index": 20,
+      "zone": "chest",
+      "zone_index": 20,
+      "raw_index_1based": 5,
+      "point_ids": [
+        "p_72a2a4846806",
+        "p_b7ed412dc6c9",
+        "p_ce21e2f9043b",
+        "p_573c6bce21e9"
+      ]
+    },
+    {
+      "state_index": 21,
+      "zone": "chest",
+      "zone_index": 21,
+      "raw_index_1based": 21,
+      "point_ids": [
+        "p_c2905cfe2638",
+        "p_dd4be3a1208b",
+        "p_88ad5ad07d63",
+        "p_50b806552b0c"
+      ]
+    },
+    {
+      "state_index": 22,
+      "zone": "chest",
+      "zone_index": 22,
+      "raw_index_1based": 37,
+      "point_ids": [
+        "p_cd503df02116",
+        "p_bf253f9e792c",
+        "p_2a4b4ec64fd3",
+        "p_ff8064a3e232"
+      ]
+    },
+    {
+      "state_index": 23,
+      "zone": "chest",
+      "zone_index": 23,
+      "raw_index_1based": 53,
+      "point_ids": [
+        "p_d6ed07fb4bb9",
+        "p_74596ee1ce5a",
+        "p_a7ecd0e813cd",
+        "p_733e243926f8"
+      ]
+    },
+    {
+      "state_index": 24,
+      "zone": "chest",
+      "zone_index": 24,
+      "raw_index_1based": 198,
+      "point_ids": [
+        "p_27940d78d52a",
+        "p_f7f488e80124",
+        "p_c6a14b9ca74b",
+        "p_6eff3ab54b8a"
+      ]
+    },
+    {
+      "state_index": 25,
+      "zone": "chest",
+      "zone_index": 25,
+      "raw_index_1based": 214,
+      "point_ids": [
+        "p_57cf8b62625d",
+        "p_b3d44fd5cfbb",
+        "p_4679bf3f580f",
+        "p_bbcd046c55f8"
+      ]
+    },
+    {
+      "state_index": 26,
+      "zone": "chest",
+      "zone_index": 26,
+      "raw_index_1based": 230,
+      "point_ids": [
+        "p_182b9b829c6f",
+        "p_2a1a832bda7c",
+        "p_da80344b9021",
+        "p_aca219b5490b"
+      ]
+    },
+    {
+      "state_index": 27,
+      "zone": "chest",
+      "zone_index": 27,
+      "raw_index_1based": 246,
+      "point_ids": [
+        "p_2a37b0f0e8c4",
+        "p_0d702a44dd5d",
+        "p_f3bb3b35e256",
+        "p_edfb720cfaaf"
+      ]
+    },
+    {
+      "state_index": 28,
+      "zone": "chest",
+      "zone_index": 28,
+      "raw_index_1based": 6,
+      "point_ids": [
+        "p_fcadf0459e78",
+        "p_def4852a63b0",
+        "p_ec91d80926fc",
+        "p_9f2c0f34d70b"
+      ]
+    },
+    {
+      "state_index": 29,
+      "zone": "chest",
+      "zone_index": 29,
+      "raw_index_1based": 22,
+      "point_ids": [
+        "p_d4ab4e33e344",
+        "p_4475df55d071",
+        "p_4a62aa0bc9be",
+        "p_f2a769da6827"
+      ]
+    },
+    {
+      "state_index": 30,
+      "zone": "chest",
+      "zone_index": 30,
+      "raw_index_1based": 38,
+      "point_ids": [
+        "p_2fc2026eae29",
+        "p_6bf3f2074e80",
+        "p_245c54e43e8b",
+        "p_a6f5e8d1dc88"
+      ]
+    },
+    {
+      "state_index": 31,
+      "zone": "chest",
+      "zone_index": 31,
+      "raw_index_1based": 54,
+      "point_ids": [
+        "p_9be7e81b0032",
+        "p_6948b819adf0",
+        "p_72159f37fd2c",
+        "p_84f8e1dfe828"
+      ]
+    },
+    {
+      "state_index": 32,
+      "zone": "chest",
+      "zone_index": 32,
+      "raw_index_1based": 199,
+      "point_ids": [
+        "p_7aca146940ea",
+        "p_394253b913bf",
+        "p_936d2274b68a",
+        "p_6efab5001325"
+      ]
+    },
+    {
+      "state_index": 33,
+      "zone": "chest",
+      "zone_index": 33,
+      "raw_index_1based": 215,
+      "point_ids": [
+        "p_3c055d46fb36",
+        "p_c28f20acb049",
+        "p_9a194aaac167",
+        "p_aea226e0bf85"
+      ]
+    },
+    {
+      "state_index": 34,
+      "zone": "chest",
+      "zone_index": 34,
+      "raw_index_1based": 231,
+      "point_ids": [
+        "p_b04ea79f2737",
+        "p_2bcbc9681abe",
+        "p_083d694660f0",
+        "p_d664375659a7"
+      ]
+    },
+    {
+      "state_index": 35,
+      "zone": "chest",
+      "zone_index": 35,
+      "raw_index_1based": 247,
+      "point_ids": [
+        "p_b86f6943df13",
+        "p_728f0230aa1d",
+        "p_8d7491c5001c",
+        "p_490da3d9b8f2"
+      ]
+    },
+    {
+      "state_index": 36,
+      "zone": "chest",
+      "zone_index": 36,
+      "raw_index_1based": 7,
+      "point_ids": [
+        "p_31b4f235e1a2",
+        "p_42da1f1eae4c",
+        "p_b23eebcfb7ac",
+        "p_994232ee72f5"
+      ]
+    },
+    {
+      "state_index": 37,
+      "zone": "chest",
+      "zone_index": 37,
+      "raw_index_1based": 23,
+      "point_ids": [
+        "p_5871afc5471a",
+        "p_1c91b67a0453",
+        "p_05c10a32033c",
+        "p_0805d82eef52"
+      ]
+    },
+    {
+      "state_index": 38,
+      "zone": "chest",
+      "zone_index": 38,
+      "raw_index_1based": 39,
+      "point_ids": [
+        "p_66eded6f3790",
+        "p_a4af5b4c59fb",
+        "p_23afaf6f5235",
+        "p_297be393cbbd"
+      ]
+    },
+    {
+      "state_index": 39,
+      "zone": "chest",
+      "zone_index": 39,
+      "raw_index_1based": 55,
+      "point_ids": [
+        "p_0887dba9f4ba",
+        "p_2d8897d0502e",
+        "p_470a1b90e8a0",
+        "p_debd60b39c8e"
+      ]
+    },
+    {
+      "state_index": 40,
+      "zone": "chest",
+      "zone_index": 40,
+      "raw_index_1based": 200,
+      "point_ids": [
+        "p_d408d02774ee",
+        "p_af5aeae833a9",
+        "p_e429e9be0c7a",
+        "p_d7c284c48a1d"
+      ]
+    },
+    {
+      "state_index": 41,
+      "zone": "chest",
+      "zone_index": 41,
+      "raw_index_1based": 216,
+      "point_ids": [
+        "p_6319ad2b102e",
+        "p_5c041a5ddb7e",
+        "p_a20dbc302be2",
+        "p_0820298b1528"
+      ]
+    },
+    {
+      "state_index": 42,
+      "zone": "chest",
+      "zone_index": 42,
+      "raw_index_1based": 232,
+      "point_ids": [
+        "p_be92156a28a8",
+        "p_3d90e12eb92a",
+        "p_1ad9e286ec87",
+        "p_c63e6349e3c0"
+      ]
+    },
+    {
+      "state_index": 43,
+      "zone": "chest",
+      "zone_index": 43,
+      "raw_index_1based": 248,
+      "point_ids": [
+        "p_2c5393d91b3e",
+        "p_bc0aaecf6527",
+        "p_5c05014a8433",
+        "p_7cbdc6b4b800"
+      ]
+    },
+    {
+      "state_index": 44,
+      "zone": "chest",
+      "zone_index": 44,
+      "raw_index_1based": 8,
+      "point_ids": [
+        "p_e4eaa90e00b6",
+        "p_b9512a343192",
+        "p_a5591b4bf6de",
+        "p_8daed67fc9d6"
+      ]
+    },
+    {
+      "state_index": 45,
+      "zone": "chest",
+      "zone_index": 45,
+      "raw_index_1based": 24,
+      "point_ids": [
+        "p_96b757fe2025",
+        "p_e156f478b076",
+        "p_0b6dd6f9b084",
+        "p_0d438db57e57"
+      ]
+    },
+    {
+      "state_index": 46,
+      "zone": "chest",
+      "zone_index": 46,
+      "raw_index_1based": 40,
+      "point_ids": [
+        "p_611447c3b766",
+        "p_45a12c561f2c",
+        "p_674114386088",
+        "p_cba1f6645145"
+      ]
+    },
+    {
+      "state_index": 47,
+      "zone": "chest",
+      "zone_index": 47,
+      "raw_index_1based": 56,
+      "point_ids": [
+        "p_c7938da9a045",
+        "p_8df628090cca",
+        "p_7538105caa0c",
+        "p_fbb9b8985880"
+      ]
+    },
+    {
+      "state_index": 48,
+      "zone": "back",
+      "zone_index": 0,
+      "raw_index_1based": 206,
+      "point_ids": [
+        "p_f6c801bf1018",
+        "p_9c85ade068fd",
+        "p_638c90ae5b35",
+        "p_4f2ac612587d"
+      ]
+    },
+    {
+      "state_index": 49,
+      "zone": "back",
+      "zone_index": 1,
+      "raw_index_1based": 222,
+      "point_ids": [
+        "p_6445c00d27a5",
+        "p_4c4ec714f722",
+        "p_5e0eb6f913aa",
+        "p_b54dc5bbf748"
+      ]
+    },
+    {
+      "state_index": 50,
+      "zone": "back",
+      "zone_index": 2,
+      "raw_index_1based": 238,
+      "point_ids": [
+        "p_3783842a5e22",
+        "p_502d96768223",
+        "p_4d34f1fe77a0",
+        "p_2340110fe3c2"
+      ]
+    },
+    {
+      "state_index": 51,
+      "zone": "back",
+      "zone_index": 3,
+      "raw_index_1based": 254,
+      "point_ids": [
+        "p_a26bbd5eabdd",
+        "p_f94b4110b815",
+        "p_9906e454c9b7",
+        "p_f0695c0b4112"
+      ]
+    },
+    {
+      "state_index": 52,
+      "zone": "back",
+      "zone_index": 4,
+      "raw_index_1based": 14,
+      "point_ids": [
+        "p_fb918079cb43",
+        "p_5c2a16065c1e",
+        "p_e63654ab513f",
+        "p_57db2d89f002"
+      ]
+    },
+    {
+      "state_index": 53,
+      "zone": "back",
+      "zone_index": 5,
+      "raw_index_1based": 30,
+      "point_ids": [
+        "p_b85ee362d24e",
+        "p_805921259d7c",
+        "p_50afa5e2caa2",
+        "p_b89713314cbd"
+      ]
+    },
+    {
+      "state_index": 54,
+      "zone": "back",
+      "zone_index": 6,
+      "raw_index_1based": 46,
+      "point_ids": [
+        "p_38b080afdaab",
+        "p_357344acd177",
+        "p_af23054fc49f",
+        "p_c3677ff729af"
+      ]
+    },
+    {
+      "state_index": 55,
+      "zone": "back",
+      "zone_index": 7,
+      "raw_index_1based": 62,
+      "point_ids": [
+        "p_83f35ba40ecb",
+        "p_f3f02cfba5c8",
+        "p_2f2f87437611",
+        "p_52531f1a85c7"
+      ]
+    },
+    {
+      "state_index": 56,
+      "zone": "back",
+      "zone_index": 8,
+      "raw_index_1based": 205,
+      "point_ids": [
+        "p_d3d16b18bc67",
+        "p_6e04225a44ab",
+        "p_ef6a2fec5ceb",
+        "p_6407c7018297"
+      ]
+    },
+    {
+      "state_index": 57,
+      "zone": "back",
+      "zone_index": 9,
+      "raw_index_1based": 221,
+      "point_ids": [
+        "p_15d22573c597",
+        "p_928c97b832bf",
+        "p_513d8693716e",
+        "p_caaff5641af2"
+      ]
+    },
+    {
+      "state_index": 58,
+      "zone": "back",
+      "zone_index": 10,
+      "raw_index_1based": 237,
+      "point_ids": [
+        "p_393c4fab0ccd",
+        "p_7141fb830d14",
+        "p_4f165564229d",
+        "p_2c1569264b4e"
+      ]
+    },
+    {
+      "state_index": 59,
+      "zone": "back",
+      "zone_index": 11,
+      "raw_index_1based": 253,
+      "point_ids": [
+        "p_f3e714c1dd20",
+        "p_bfa159ee3219",
+        "p_00072cbdc7aa",
+        "p_fd9b79745c61"
+      ]
+    },
+    {
+      "state_index": 60,
+      "zone": "back",
+      "zone_index": 12,
+      "raw_index_1based": 13,
+      "point_ids": [
+        "p_1009b7092fd5",
+        "p_f9319a970931",
+        "p_d949ce1311fe",
+        "p_675413481b46"
+      ]
+    },
+    {
+      "state_index": 61,
+      "zone": "back",
+      "zone_index": 13,
+      "raw_index_1based": 29,
+      "point_ids": [
+        "p_d4b237552550",
+        "p_0ba403c36502",
+        "p_b660b885e218",
+        "p_51836f299b51"
+      ]
+    },
+    {
+      "state_index": 62,
+      "zone": "back",
+      "zone_index": 14,
+      "raw_index_1based": 45,
+      "point_ids": [
+        "p_aa23d2abc55a",
+        "p_b66f153d15a4",
+        "p_da5ddabf6c03",
+        "p_6e3a264ee34d"
+      ]
+    },
+    {
+      "state_index": 63,
+      "zone": "back",
+      "zone_index": 15,
+      "raw_index_1based": 61,
+      "point_ids": [
+        "p_f735d448ae3c",
+        "p_1c4042cd4f66",
+        "p_3ba7170a56e0",
+        "p_8faa99a3738a"
+      ]
+    },
+    {
+      "state_index": 64,
+      "zone": "back",
+      "zone_index": 16,
+      "raw_index_1based": 204,
+      "point_ids": [
+        "p_251bffc937d5",
+        "p_3b6faec81ef2",
+        "p_04810fa330f1",
+        "p_26defb9b07bd"
+      ]
+    },
+    {
+      "state_index": 65,
+      "zone": "back",
+      "zone_index": 17,
+      "raw_index_1based": 220,
+      "point_ids": [
+        "p_64ffcb1f9a50",
+        "p_76908228c28b",
+        "p_e80cdd87c5cb",
+        "p_ca18d6060954"
+      ]
+    },
+    {
+      "state_index": 66,
+      "zone": "back",
+      "zone_index": 18,
+      "raw_index_1based": 236,
+      "point_ids": [
+        "p_eb38f41c822c",
+        "p_302b418061bc",
+        "p_342fe10af145",
+        "p_6c2e289c85f0"
+      ]
+    },
+    {
+      "state_index": 67,
+      "zone": "back",
+      "zone_index": 19,
+      "raw_index_1based": 252,
+      "point_ids": [
+        "p_8806a8bd1991",
+        "p_b3c26adc8a94",
+        "p_abd2c369b7ab",
+        "p_908b3722d29c"
+      ]
+    },
+    {
+      "state_index": 68,
+      "zone": "back",
+      "zone_index": 20,
+      "raw_index_1based": 12,
+      "point_ids": [
+        "p_518bbc0ee840",
+        "p_8341b675ff87",
+        "p_a4a655bd4635",
+        "p_5ef7c62bcb79"
+      ]
+    },
+    {
+      "state_index": 69,
+      "zone": "back",
+      "zone_index": 21,
+      "raw_index_1based": 28,
+      "point_ids": [
+        "p_0ba2ed5f5cca",
+        "p_840f69d88aba",
+        "p_4b4ec8d702ed",
+        "p_da94da0ef3bc"
+      ]
+    },
+    {
+      "state_index": 70,
+      "zone": "back",
+      "zone_index": 22,
+      "raw_index_1based": 44,
+      "point_ids": [
+        "p_8edc4f44f6bd",
+        "p_d28df8672f9d",
+        "p_620427b6b348",
+        "p_5886a0cf26a6"
+      ]
+    },
+    {
+      "state_index": 71,
+      "zone": "back",
+      "zone_index": 23,
+      "raw_index_1based": 60,
+      "point_ids": [
+        "p_3a5142024bd3",
+        "p_2d715bf764ae",
+        "p_9a68c5a4e1fc",
+        "p_b93a7860201c"
+      ]
+    },
+    {
+      "state_index": 72,
+      "zone": "back",
+      "zone_index": 24,
+      "raw_index_1based": 203,
+      "point_ids": [
+        "p_06ecb69355d1",
+        "p_fdfab4f870da",
+        "p_3fffe823da98",
+        "p_2615ca9e068e"
+      ]
+    },
+    {
+      "state_index": 73,
+      "zone": "back",
+      "zone_index": 25,
+      "raw_index_1based": 219,
+      "point_ids": [
+        "p_b545716a8393",
+        "p_4600b6c7fc6d",
+        "p_bd1597b14b38",
+        "p_c4a7c2eddbcc"
+      ]
+    },
+    {
+      "state_index": 74,
+      "zone": "back",
+      "zone_index": 26,
+      "raw_index_1based": 235,
+      "point_ids": [
+        "p_061f073b96c1",
+        "p_14b187aa3da5",
+        "p_4e0809c9afc1",
+        "p_d734b9e8c0a5"
+      ]
+    },
+    {
+      "state_index": 75,
+      "zone": "back",
+      "zone_index": 27,
+      "raw_index_1based": 251,
+      "point_ids": [
+        "p_06b1f13a1d49",
+        "p_d86e2870b177",
+        "p_c99cdcb43a42",
+        "p_79b6c5069b96"
+      ]
+    },
+    {
+      "state_index": 76,
+      "zone": "back",
+      "zone_index": 28,
+      "raw_index_1based": 11,
+      "point_ids": [
+        "p_f6e5e4b3be40",
+        "p_41f389ef1fd9",
+        "p_933cb3425810",
+        "p_5c42515e906b"
+      ]
+    },
+    {
+      "state_index": 77,
+      "zone": "back",
+      "zone_index": 29,
+      "raw_index_1based": 27,
+      "point_ids": [
+        "p_e80ba7224106",
+        "p_48cec67a7fb1",
+        "p_2347374287e1",
+        "p_556f9c9f44a0"
+      ]
+    },
+    {
+      "state_index": 78,
+      "zone": "back",
+      "zone_index": 30,
+      "raw_index_1based": 43,
+      "point_ids": [
+        "p_68c3d136dc4b",
+        "p_809a4913fbf4",
+        "p_225a4a991865",
+        "p_ea7001afc46c"
+      ]
+    },
+    {
+      "state_index": 79,
+      "zone": "back",
+      "zone_index": 31,
+      "raw_index_1based": 59,
+      "point_ids": [
+        "p_328548d07249",
+        "p_0e82f632d496",
+        "p_5cbc40f96d05",
+        "p_053f0a2f408b"
+      ]
+    },
+    {
+      "state_index": 80,
+      "zone": "back",
+      "zone_index": 32,
+      "raw_index_1based": 202,
+      "point_ids": [
+        "p_57ce4ecfdcdd",
+        "p_77a1449a39cd",
+        "p_4d4713662575",
+        "p_56b0de749c9c"
+      ]
+    },
+    {
+      "state_index": 81,
+      "zone": "back",
+      "zone_index": 33,
+      "raw_index_1based": 218,
+      "point_ids": [
+        "p_e6e835b75ca9",
+        "p_21c2fe289dd3",
+        "p_edeebc091266",
+        "p_49e991acd83c"
+      ]
+    },
+    {
+      "state_index": 82,
+      "zone": "back",
+      "zone_index": 34,
+      "raw_index_1based": 234,
+      "point_ids": [
+        "p_b4e811fd5ceb",
+        "p_43e97fd7bfb9",
+        "p_d6c9e8c72ef4",
+        "p_f182ed7a557c"
+      ]
+    },
+    {
+      "state_index": 83,
+      "zone": "back",
+      "zone_index": 35,
+      "raw_index_1based": 250,
+      "point_ids": [
+        "p_f1026ec26a71",
+        "p_b7f7db4c2d55",
+        "p_10e8037f33da",
+        "p_c3f29df64469"
+      ]
+    },
+    {
+      "state_index": 84,
+      "zone": "back",
+      "zone_index": 36,
+      "raw_index_1based": 10,
+      "point_ids": [
+        "p_bea071083c6a",
+        "p_144612c88a77",
+        "p_a0df63650d7b",
+        "p_d4320b588249"
+      ]
+    },
+    {
+      "state_index": 85,
+      "zone": "back",
+      "zone_index": 37,
+      "raw_index_1based": 26,
+      "point_ids": [
+        "p_06bbde3b5ec8",
+        "p_381105359d03",
+        "p_4224df2ebf5a",
+        "p_b1eb0207b6b2"
+      ]
+    },
+    {
+      "state_index": 86,
+      "zone": "back",
+      "zone_index": 38,
+      "raw_index_1based": 42,
+      "point_ids": [
+        "p_2cfa99ecab38",
+        "p_8acb67f06951",
+        "p_f2cfacd0b5f8",
+        "p_08456366e056"
+      ]
+    },
+    {
+      "state_index": 87,
+      "zone": "back",
+      "zone_index": 39,
+      "raw_index_1based": 58,
+      "point_ids": [
+        "p_d902e9e70729",
+        "p_9931e381e369",
+        "p_40deb45c56bb",
+        "p_1d01b1cedbfc"
+      ]
+    },
+    {
+      "state_index": 88,
+      "zone": "left_arm",
+      "zone_index": 0,
+      "raw_index_1based": 79,
+      "point_ids": [
+        "p_096946efc77e",
+        "p_9bde98571230",
+        "p_52322bc879f0",
+        "p_ec4355faed37",
+        "p_934f35d4a40c",
+        "p_23701e00f362"
+      ]
+    },
+    {
+      "state_index": 89,
+      "zone": "left_arm",
+      "zone_index": 1,
+      "raw_index_1based": 95,
+      "point_ids": [
+        "p_2340cad2fbc6",
+        "p_a779b35de0a3",
+        "p_b13e770fb3d7",
+        "p_ab0316f3e6ac",
+        "p_642fd55c469f",
+        "p_f38424bceb41"
+      ]
+    },
+    {
+      "state_index": 90,
+      "zone": "left_arm",
+      "zone_index": 2,
+      "raw_index_1based": 111,
+      "point_ids": [
+        "p_e85fc1c56c95",
+        "p_c3d9586fdf5f",
+        "p_730d8ef8cc47",
+        "p_4ecbb132cc38",
+        "p_7fdd0170f2d7",
+        "p_f184b62872c8"
+      ]
+    },
+    {
+      "state_index": 91,
+      "zone": "left_arm",
+      "zone_index": 3,
+      "raw_index_1based": 127,
+      "point_ids": [
+        "p_9db15fce022e",
+        "p_b5b4e1db94f9",
+        "p_899011053eea",
+        "p_d8fec8d0323c",
+        "p_baf5e71600b3",
+        "p_ea5a7aa424ea"
+      ]
+    },
+    {
+      "state_index": 92,
+      "zone": "left_arm",
+      "zone_index": 4,
+      "raw_index_1based": 80,
+      "point_ids": [
+        "p_4beb5ba1e003",
+        "p_a75894256b51",
+        "p_8ddd7575f65e",
+        "p_07b2d8c72e05",
+        "p_4a857bafe730",
+        "p_b8da4d2e6cb2"
+      ]
+    },
+    {
+      "state_index": 93,
+      "zone": "left_arm",
+      "zone_index": 5,
+      "raw_index_1based": 96,
+      "point_ids": [
+        "p_0b874c1393ff",
+        "p_5ec76b7cb617",
+        "p_c9e5da703430",
+        "p_7673f922a795",
+        "p_670c605a7e85",
+        "p_af1f9d672be5"
+      ]
+    },
+    {
+      "state_index": 94,
+      "zone": "left_arm",
+      "zone_index": 6,
+      "raw_index_1based": 112,
+      "point_ids": [
+        "p_c85d3fac5318",
+        "p_75ca42cd5f34",
+        "p_68dc64e7c8a3",
+        "p_ec3ee1347626",
+        "p_d1cd1a51bfe5",
+        "p_2a8d290eed4a"
+      ]
+    },
+    {
+      "state_index": 95,
+      "zone": "left_arm",
+      "zone_index": 7,
+      "raw_index_1based": 128,
+      "point_ids": [
+        "p_3062b53ecfbd",
+        "p_fedecf359da3",
+        "p_f7a1de1ec96e",
+        "p_104701e63ddf",
+        "p_164158a44675",
+        "p_7122c824f127"
+      ]
+    },
+    {
+      "state_index": 96,
+      "zone": "right_arm",
+      "zone_index": 0,
+      "raw_index_1based": 177,
+      "point_ids": [
+        "p_b45564e302a4",
+        "p_cdfb8810df0a",
+        "p_c03b971d617d",
+        "p_9d9720239115",
+        "p_6e2f0640acd8",
+        "p_01672a538cc9"
+      ]
+    },
+    {
+      "state_index": 97,
+      "zone": "right_arm",
+      "zone_index": 1,
+      "raw_index_1based": 161,
+      "point_ids": [
+        "p_377f8e8469ff",
+        "p_bcb67c8c35bf",
+        "p_da623dad255c",
+        "p_7e47334e6ba2",
+        "p_b3404e2ccd83",
+        "p_0823bef5cca5"
+      ]
+    },
+    {
+      "state_index": 98,
+      "zone": "right_arm",
+      "zone_index": 2,
+      "raw_index_1based": 145,
+      "point_ids": [
+        "p_99f4730e954a",
+        "p_9f750d8a0912",
+        "p_552a4d14b32c",
+        "p_4e7d98b7bad1",
+        "p_a1cc0edd3492",
+        "p_055891e42933"
+      ]
+    },
+    {
+      "state_index": 99,
+      "zone": "right_arm",
+      "zone_index": 3,
+      "raw_index_1based": 129,
+      "point_ids": [
+        "p_24d20f4e61ee",
+        "p_73db88890466",
+        "p_4e0e83560bda",
+        "p_ed25d48943ee",
+        "p_abb733a9b16f",
+        "p_05a08137fdfe"
+      ]
+    },
+    {
+      "state_index": 100,
+      "zone": "right_arm",
+      "zone_index": 4,
+      "raw_index_1based": 178,
+      "point_ids": [
+        "p_6d3e648ed40e",
+        "p_b1d6011c80d1",
+        "p_c066a83aaa74",
+        "p_b3e911cfc26b",
+        "p_6c4e6da97899",
+        "p_20369b6863ac"
+      ]
+    },
+    {
+      "state_index": 101,
+      "zone": "right_arm",
+      "zone_index": 5,
+      "raw_index_1based": 162,
+      "point_ids": [
+        "p_37e2ac59d0ac",
+        "p_8fa38d6b6044",
+        "p_21c92ce334eb",
+        "p_66594a0a31ab",
+        "p_a893270b0ffe",
+        "p_cb96438d2375"
+      ]
+    },
+    {
+      "state_index": 102,
+      "zone": "right_arm",
+      "zone_index": 6,
+      "raw_index_1based": 146,
+      "point_ids": [
+        "p_73359afa6283",
+        "p_a81d867efaf9",
+        "p_f8006179ef96",
+        "p_3709457a714b",
+        "p_6be94a3e14ad",
+        "p_d562eb4590ef"
+      ]
+    },
+    {
+      "state_index": 103,
+      "zone": "right_arm",
+      "zone_index": 7,
+      "raw_index_1based": 130,
+      "point_ids": [
+        "p_e70c2aa287ba",
+        "p_bd9d78daea0a",
+        "p_f3c633421463",
+        "p_2381a8e724bd",
+        "p_55e3c5c14a03",
+        "p_28f5cae5b3b1"
+      ]
+    },
+    {
+      "state_index": 104,
+      "zone": "left_shoulder",
+      "zone_index": 0,
+      "raw_index_1based": 9,
+      "point_ids": [
+        "p_05e744c992bd",
+        "p_a7b1088de669"
+      ]
+    },
+    {
+      "state_index": 105,
+      "zone": "left_shoulder",
+      "zone_index": 1,
+      "raw_index_1based": 25,
+      "point_ids": [
+        "p_6da354859d55",
+        "p_478eb3e611cb"
+      ]
+    },
+    {
+      "state_index": 106,
+      "zone": "left_shoulder",
+      "zone_index": 2,
+      "raw_index_1based": 41,
+      "point_ids": [
+        "p_d5d60d75c9a5",
+        "p_c458689ad897"
+      ]
+    },
+    {
+      "state_index": 107,
+      "zone": "left_shoulder",
+      "zone_index": 3,
+      "raw_index_1based": 57,
+      "point_ids": [
+        "p_cf517bb88484",
+        "p_06be6a6f0257"
+      ]
+    },
+    {
+      "state_index": 108,
+      "zone": "right_shoulder",
+      "zone_index": 0,
+      "raw_index_1based": 249,
+      "point_ids": [
+        "p_470072a17991",
+        "p_6a9b9c63d45f"
+      ]
+    },
+    {
+      "state_index": 109,
+      "zone": "right_shoulder",
+      "zone_index": 1,
+      "raw_index_1based": 233,
+      "point_ids": [
+        "p_e2a8d004e812",
+        "p_4ca0202b513b"
+      ]
+    },
+    {
+      "state_index": 110,
+      "zone": "right_shoulder",
+      "zone_index": 2,
+      "raw_index_1based": 217,
+      "point_ids": [
+        "p_5c8c0146b086",
+        "p_769905d766b6"
+      ]
+    },
+    {
+      "state_index": 111,
+      "zone": "right_shoulder",
+      "zone_index": 3,
+      "raw_index_1based": 201,
+      "point_ids": [
+        "p_636a5b3f76fc",
+        "p_eed70f39021c"
+      ]
+    }
+  ],
+  "construction": {
+    "method": "Reuse all original channel point IDs and order without reassignment; authenticate against historical inner geometry."
+  },
+  "assumptions": [
+    "Garment unfolded back panel folds toward lower back; verify physical corner channels.",
+    "Coverage grouping follows diagram boxes and current geometric sampling, not verified wiring.",
+    "No physical aggregation law or counts calibration is provided by the manual."
+  ],
+  "derivation": {
+    "source_points": "points.before-arm-side-flip-20260915-133850.json",
+    "source_points_sha256": "1f2761dc852021e54fde1ff58b1035e351605a32d5141d060b80a384e43af96f",
+    "source_mapping_sha256": "12b79ed6754abf3b42cc64168f1b520d644966d8db0818458c5f136802f0b8a6",
+    "original_channels_sha256": "cce423e09acfa426705aa4b5dfd8b3ba9a07d4b956f0bdda91e4f75a50d19150"
+  }
+}

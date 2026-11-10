@@ -32,11 +32,13 @@ Original implementation: **Chong Zhang** (ETH Zurich). Code license: [MIT](LICEN
 - [OpenDoor数据适配、统一状态奖励与训练](docs/open-door-workflow.md)
 - [OpenDoorSide独立配置、右侧接触奖励与训练](docs/open-door-side-workflow.md)
 - [数据源转换、纯运动学回放、碰撞资产](docs/motion-and-assets.md)
+- [G1 触觉点、通道与 mjlab 传感器](docs/tactile.md)
 - [实现契约](CONTEXT.md)
 
 ```text
 motion_data/                  标准NPZ、原始数据转换、碰撞缓存、reference和split
 supermimic/assets/g1/          G1资产与FK
+supermimic/tactile.py          G1触觉点到任务物体表面的几何传感器
 supermimic/mdp/                共用机器人状态、动作、reward、reset
 supermimic/rl/                 训练循环、Replay、多卡、归一化与几何组件
 supermimic/tasks/g1_tracking/  Tracking网络与任务

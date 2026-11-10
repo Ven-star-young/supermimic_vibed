@@ -1,0 +1,201 @@
+{
+  "status": "documented_driver_layout_snapshot_not_g1_geometry",
+  "captured_on": "2026-09-14",
+  "source_repository": "../jq-skin",
+  "source_commit": "da8a2feb1b3be1ee3b694ad9ab3221d554010aa1",
+  "source_file": "src/jq_skin/layout.py",
+  "source_sha256": "d5a5d9d8a19c1189c5859ee985b7533d2dab18ff3ef8918df0d2073fcf051292",
+  "official_reference": "jq-textile-skin-hf-260114-v1.0.pdf",
+  "official_pages": [
+    16,
+    17,
+    18
+  ],
+  "body_part": "upper_body",
+  "sensor_type_hex": "0x05",
+  "raw_array_length": 256,
+  "channel_count": 112,
+  "units": "counts; no force conversion available",
+  "ordering_notes": [
+    "raw_indices_1based 为压力数组的1基字节位置，读取Python数组时减1。",
+    "区域顺序为当前jq-skin实现顺序。",
+    "背部采用第18页back条目并反转整个列表以匹配第16页展开图显示；2026-09-16重新渲染确认第17页也为250，之前记录350是误读，实际索引未变。",
+    "右臂采用第17页分区表，未采用第18页汇总表右臂顺序。",
+    "当前核对的左臂第17页和第18页一致，不能沿用代码注释中两臂均冲突的概括。",
+    "网格只表示显示排列，不是实测均匀间距、感应面积或G1 link坐标。"
+  ],
+  "zones": [
+    {
+      "name": "chest",
+      "channel_count": 48,
+      "raw_indices_1based": [
+        195,
+        211,
+        227,
+        243,
+        3,
+        19,
+        35,
+        51,
+        196,
+        212,
+        228,
+        244,
+        4,
+        20,
+        36,
+        52,
+        197,
+        213,
+        229,
+        245,
+        5,
+        21,
+        37,
+        53,
+        198,
+        214,
+        230,
+        246,
+        6,
+        22,
+        38,
+        54,
+        199,
+        215,
+        231,
+        247,
+        7,
+        23,
+        39,
+        55,
+        200,
+        216,
+        232,
+        248,
+        8,
+        24,
+        40,
+        56
+      ],
+      "display_grid_shape": [
+        6,
+        8
+      ]
+    },
+    {
+      "name": "back",
+      "channel_count": 40,
+      "raw_indices_1based": [
+        206,
+        222,
+        238,
+        254,
+        14,
+        30,
+        46,
+        62,
+        205,
+        221,
+        237,
+        253,
+        13,
+        29,
+        45,
+        61,
+        204,
+        220,
+        236,
+        252,
+        12,
+        28,
+        44,
+        60,
+        203,
+        219,
+        235,
+        251,
+        11,
+        27,
+        43,
+        59,
+        202,
+        218,
+        234,
+        250,
+        10,
+        26,
+        42,
+        58
+      ],
+      "display_grid_shape": [
+        5,
+        8
+      ]
+    },
+    {
+      "name": "left_arm",
+      "channel_count": 8,
+      "raw_indices_1based": [
+        79,
+        95,
+        111,
+        127,
+        80,
+        96,
+        112,
+        128
+      ],
+      "display_grid_shape": [
+        2,
+        4
+      ]
+    },
+    {
+      "name": "right_arm",
+      "channel_count": 8,
+      "raw_indices_1based": [
+        177,
+        161,
+        145,
+        129,
+        178,
+        162,
+        146,
+        130
+      ],
+      "display_grid_shape": [
+        2,
+        4
+      ]
+    },
+    {
+      "name": "left_shoulder",
+      "channel_count": 4,
+      "raw_indices_1based": [
+        9,
+        25,
+        41,
+        57
+      ],
+      "display_grid_shape": [
+        1,
+        4
+      ]
+    },
+    {
+      "name": "right_shoulder",
+      "channel_count": 4,
+      "raw_indices_1based": [
+        249,
+        233,
+        217,
+        201
+      ],
+      "display_grid_shape": [
+        1,
+        4
+      ]
+    }
+  ]
+}
