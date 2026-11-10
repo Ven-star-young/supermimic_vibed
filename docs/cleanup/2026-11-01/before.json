@@ -1,0 +1,12 @@
+{
+  "git_status": " M supermimic/tasks/open_door/motion.py\n M tests/test_open_door_motion.py\n?? results/sitting_open_door_montage/\n",
+  "protected_modified_sha256": {
+    "supermimic/tasks/open_door/motion.py": "e1ac9bd8d8cfe473ed9a8c7d03e89664c755e40334a6b14a4d911a14f6c1c3c5",
+    "tests/test_open_door_motion.py": "6d6e8c5f18378e77064be7413c768881d02d775fa8327c0ba7039438124d4883"
+  },
+  "scope": [
+    "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed",
+    "/home/frank/Robotics/Paper/Humanoid/open_door"
+  ],
+  "keep_final_video": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/sitting_back_side_clean.mp4"
+}

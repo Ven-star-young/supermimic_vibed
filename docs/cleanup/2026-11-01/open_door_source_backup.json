@@ -1,0 +1,23 @@
+{
+  "source": "/home/frank/Robotics/Paper/Humanoid/open_door",
+  "head": "77ff70f5e9ba9e7db06b49cf3bc9bd1816d9a41f",
+  "files": {
+    "open_door/config.py": "1c26096d1e88b035e45d58f0bff85f19be18db95dd6290bc98a9fd8f4fb04efa",
+    "open_door/task.py": "56a3c401484fc3648578189a07aabfcfc1b4ff37204f54b2f74c126d1c505421",
+    "configs/door45_ppo_back_align.json": "7ffd01b441002c80bcd688ac9133371d2c05318aeeaff4b19ebd10389181ee09",
+    "docs/back_roll_yaw_reward.md": "e8de5750cdff65adbf96381d15a45c96cb7a8f7f873a18885ca5814aaf8b86e2",
+    "docs/door_reference_data_20261030.md": "2874b445745287c1bf95ed20e3f8c57cb93ab62f1b89bfa89dd2459be75a6328",
+    "docs/natural_motion_literature_20261030.md": "8eb4f607daab5a8fff08075df4f195d58d6c183a4a8aacdaf210560d33427a96",
+    "tests/test_back_roll_yaw.py": "a93cfd8a749add3031e7acd9b9c238b79c206a3970e02edfc5be204ef926511f",
+    "tests/test_torso_roll.py": "21b370a2732fec9c96d8f962475179cd8c46e29aa8586e3c283b18745cd25df7"
+  },
+  "server_repo": "CUHK:/home/wangfeng/open_door",
+  "server_logs": [
+    "CUHK:/home/wangfeng/open_door/logs",
+    "CUHK:/data/wangfeng/open_door/logs"
+  ],
+  "archive": "CUHK:/home/wangfeng/open_door/local_archives/frank_local_changes_20261101_025c26a48c25.tar.gz",
+  "archive_sha256": "025c26a48c259058383c283cb1236e67520c7e69fdaf67574a6364e2a377acb8",
+  "archive_size_bytes": 31654,
+  "verified": true
+}

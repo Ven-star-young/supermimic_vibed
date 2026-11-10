@@ -1,0 +1,57 @@
+{
+  "norm_return": 0.9442901611328125,
+  "norm_return_framew": 0.9442901611328125,
+  "n_failed": 0,
+  "failed": [],
+  "per_clip": {
+    "video1_g1_door_video45_centered_asset": 0.9442901611328125
+  },
+  "door_tracking": {
+    "scope": "executed_transitions_including_terminal_state; fixed_reference_phase",
+    "angle_rmse_rad": 0.026796037331223488,
+    "angular_velocity_rmse_radps": 0.0968143492937088,
+    "reference_completion_rate": 1.0,
+    "n_reference_completed": 1,
+    "per_clip": {
+      "video1_g1_door_video45_centered_asset": {
+        "angle_rmse_rad": 0.026796037331223488,
+        "angular_velocity_rmse_radps": 0.0968143492937088,
+        "reference_completed": true,
+        "observed_transitions": 406,
+        "final_theta_rad": 0.7481604814529419,
+        "final_omega_radps": -0.1148715689778328,
+        "ref_final_theta_rad": 0.7853981852531433,
+        "ref_final_omega_radps": 0.0
+      }
+    }
+  },
+  "door_contact": {
+    "source": "mujoco_warp.contact_force immediately after each physics step",
+    "scope": "executed_prefix_only; normal force summed per category and world",
+    "normal_force_threshold_n": 1.0,
+    "back_region_torso_m": {
+      "x_max": -0.025,
+      "abs_y_max": 0.13,
+      "z_min": 0.05,
+      "z_max": 0.38
+    },
+    "allowed_back_substep_rate": 0.6299260854721069,
+    "forbidden_door_substep_rate": 0.024014778435230255,
+    "n_episodes_with_forbidden_contact": 1,
+    "per_clip": {
+      "video1_g1_door_video45_centered_asset": {
+        "observed_substeps": 1624,
+        "allowed_back_substep_rate": 0.6299260854721069,
+        "forbidden_door_substep_rate": 0.024014778435230255,
+        "ever_forbidden_contact": true
+      }
+    }
+  },
+  "checkpoint": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/wm_transfer/back_model_10000.pt",
+  "checkpoint_iteration": 10000,
+  "motion": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/data/motions/open_door_prepared/video1_g1_door_video45_centered_asset.npz",
+  "motion_sha256": "31ebf5aea77be24ff8db9ba2a424307f28b71152e802bb2583f0029be17bcef6",
+  "source_motion_py_sha256": "e1ac9bd8d8cfe473ed9a8c7d03e89664c755e40334a6b14a4d911a14f6c1c3c5",
+  "physics_samples": 1625,
+  "physical_duration_s": 8.120000000000001
+}

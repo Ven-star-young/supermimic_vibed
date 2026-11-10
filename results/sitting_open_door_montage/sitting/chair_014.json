@@ -1,0 +1,252 @@
+{
+  "index": 14,
+  "label": "Brass / velvet",
+  "reference": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/data/motions/sitting/sitting__brass_clad_upholstered_armchair_brutalist_tan_velvet__000.npz",
+  "checkpoint": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/cuhk_sitting_deployment/model_8600.pt",
+  "checkpoint_sha256": "ba1942db588400e30e53fd4adb1989bb29cdd2ea8f523e7cbb84f3d3a874a706",
+  "split_fingerprint": "38e94cb72c84868692c6fdb23d51a812cb492ad9f5b1648351d530d26ede5ec9",
+  "condition": "clean",
+  "seed": 0,
+  "frames": 249,
+  "duration_s": 4.96,
+  "control_dt": 0.02,
+  "policy_unchanged": true,
+  "episode": {
+    "episode": 1,
+    "seed": 0,
+    "condition": "clean",
+    "initial": {
+      "frame": 0,
+      "state": [
+        1.0165824890136719,
+        0.6475143432617188,
+        0.7742910981178284,
+        0.1532467007637024,
+        -0.09264449775218964,
+        -0.03273643180727959,
+        -0.9832907915115356,
+        -0.19140242040157318,
+        -0.08902549743652344,
+        0.025591252371668816,
+        0.5283510088920593,
+        -0.12715905904769897,
+        -0.38127753138542175,
+        0.1750537008047104,
+        -0.02213396690785885,
+        0.09813704341650009,
+        0.3277379274368286,
+        -0.3492674231529236,
+        0.0605170801281929,
+        0.07782816886901855,
+        -0.11225377768278122,
+        -0.140140101313591,
+        0.46623459458351135,
+        -0.34673652052879333,
+        0.05410780757665634,
+        -0.2015831172466278,
+        0.057295579463243484,
+        0.05120537802577019,
+        0.0927232876420021,
+        0.023724932223558426,
+        -0.3744566738605499,
+        1.5242527723312378,
+        0.03161214664578438,
+        0.019693642854690552,
+        -0.019354118034243584,
+        -0.29008063673973083,
+        -0.03950336202979088,
+        0.7899283766746521,
+        1.4096055030822754,
+        -0.02637401781976223,
+        0.011958402581512928,
+        0.001959828194230795,
+        0.4071839153766632,
+        0.5364876985549927,
+        0.13598576188087463,
+        -0.9403139352798462,
+        1.1808574199676514,
+        -0.8933280110359192,
+        0.5552314519882202,
+        0.754055380821228,
+        0.1449383795261383,
+        -1.3950705528259277,
+        0.62151700258255,
+        -0.675091564655304,
+        0.9020611643791199,
+        0.5487917065620422,
+        -0.17922726273536682,
+        2.5655460357666016,
+        2.407935619354248,
+        0.1361757516860962,
+        -3.757357597351074,
+        1.224756121635437,
+        0.805701732635498,
+        0.3181275427341461,
+        2.116636276245117,
+        -1.456824541091919,
+        -1.4447838068008423,
+        -3.8051366806030273,
+        -0.8107877373695374,
+        -0.21457414329051971,
+        -0.1028362438082695,
+        0.0,
+        0.0,
+        0.3109840452671051,
+        0.49893540143966675,
+        0.498935341835022,
+        -0.5010623931884766,
+        -0.5010623335838318,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    "steps": 248,
+    "seconds": 4.96,
+    "outcome": "reference_complete",
+    "valid": true,
+    "reference_completed": true,
+    "full_reference_eligible": true,
+    "full_reference_success": true,
+    "normalized_return": 0.8901120095904316,
+    "mean_step_reward": 0.8901120095904316,
+    "stable_contact_success": true,
+    "stable_contact_eligible": true,
+    "metrics": {
+      "definition": "sitting_stable_contact_v1",
+      "thresholds": {
+        "stable_window_s": 1.0,
+        "window_end_s": null,
+        "min_stable_fraction": 0.95,
+        "max_gap_s": 0.04,
+        "min_support_bodyweight": 0.2,
+        "max_contact_slip_mps": 0.1,
+        "max_chair_linear_mps": 0.05,
+        "max_chair_angular_radps": 0.15,
+        "max_pelvis_relative_error_m": 0.1,
+        "max_root_orientation_error_deg": 20.0,
+        "min_normal_up_cosine": 0.7071067811865476,
+        "support_radius_m": 0.22,
+        "support_below_pelvis_min_m": 0.025,
+        "support_below_pelvis_max_m": 0.25,
+        "seat_bounds_min": null,
+        "seat_bounds_max": null
+      },
+      "force_source": "mujoco_warp.contact_force immediately after each real physics step",
+      "reference_support_region_provenance": "reference_pelvis_cylinder_not_semantically_annotated_seat",
+      "allowed_robot_bodies": [
+        "pelvis",
+        "pelvis_contour_link",
+        "left_hip_pitch_link",
+        "left_hip_roll_link",
+        "left_hip_yaw_link",
+        "right_hip_pitch_link",
+        "right_hip_roll_link",
+        "right_hip_yaw_link"
+      ],
+      "tracking_scope": "executed_prefix_only; fixed reference phase; no spatial or time alignment",
+      "tracking": {
+        "root_position_error_m": {
+          "mean": 0.11178633307891657,
+          "max": 0.29660776257514954,
+          "final": 0.024384886026382446
+        },
+        "root_orientation_error_rad": {
+          "mean": 0.10958745375636124,
+          "max": 0.19454513490200043,
+          "final": 0.09426137059926987
+        },
+        "joint_rmse_rad": {
+          "mean": 0.1458193032641805,
+          "max": 0.19595900177955627,
+          "final": 0.16474385559558868
+        },
+        "joint_max_abs_error_rad": {
+          "mean": 0.37484577556531273,
+          "max": 0.5099284648895264,
+          "final": 0.444550096988678
+        },
+        "chair_position_error_m": {
+          "mean": 0.0030891017043857927,
+          "max": 0.0031722078565508127,
+          "final": 0.0031154088210314512
+        },
+        "chair_orientation_error_rad": {
+          "mean": 0.0016284405264154738,
+          "max": 0.0030417158268392086,
+          "final": 0.0030417158268392086
+        },
+        "pelvis_chair_position_error_m": {
+          "mean": 0.11238882806801778,
+          "max": 0.2964828908443451,
+          "final": 0.025021331384778023
+        },
+        "root_linear_speed_mps": {
+          "mean": 0.49011337300074836,
+          "max": 1.6482717990875244,
+          "final": 0.001269262284040451
+        },
+        "root_angular_speed_radps": {
+          "mean": 0.7101729505210964,
+          "max": 3.4081544876098633,
+          "final": 0.012033188715577126
+        },
+        "chair_linear_speed_mps": {
+          "mean": 0.0016100599516219504,
+          "max": 0.061812300235033035,
+          "final": 0.0003214648459106684
+        },
+        "chair_angular_speed_radps": {
+          "mean": 0.003332820953958969,
+          "max": 0.1131930872797966,
+          "final": 0.0012466560583561659
+        }
+      },
+      "stable_window": {
+        "start_s": 3.96,
+        "end_s": 4.96,
+        "physics_dt": 0.005,
+        "expected_samples": 200,
+        "observed_samples": 200,
+        "jointly_stable_fraction": 1.0,
+        "max_unstable_gap_s": 0.0,
+        "stable_contact_duration_s": 1.0,
+        "load_bearing_contact_duration_s": 1.0,
+        "criterion_fractions": {
+          "support_load": 1.0,
+          "contact_slip": 1.0,
+          "chair_linear_velocity": 1.0,
+          "chair_angular_velocity": 1.0,
+          "pelvis_relative_tracking": 1.0,
+          "root_orientation_tracking": 1.0
+        },
+        "contact": {
+          "load_ratio": {
+            "mean": 0.8589462884325815,
+            "max": 0.9500754014190725,
+            "final": 0.8656012562099469
+          },
+          "slip_mps": {
+            "mean": 0.0010847453662427141,
+            "max": 0.0022135507315397263,
+            "final": 0.0010424539214000106
+          },
+          "chair_linear_mps": {
+            "mean": 0.000423752662318293,
+            "max": 0.001486110151745379,
+            "final": 0.00033895214437507093
+          },
+          "chair_angular_radps": {
+            "mean": 0.0013412817829521373,
+            "max": 0.004155799746513367,
+            "final": 0.001255800947546959
+          }
+        }
+      }
+    },
+    "failure_reasons": []
+  }
+}

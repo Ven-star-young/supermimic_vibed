@@ -1,0 +1,20 @@
+[
+  {
+    "task": "sitting",
+    "server": "CUHK",
+    "remote": "/data/wangfeng/supermimic_vibed/logs/sitting_task_2gpu",
+    "local": "logs/cuhk_sitting_deployment"
+  },
+  {
+    "task": "back",
+    "server": "CUHK",
+    "remote": "/data/wangfeng/supermimic_vibed/logs/rsl_rl/supermimic_open_door/2026-10-31_17-06-12_back_tracking_dr_rsi",
+    "local": "logs/wm_transfer"
+  },
+  {
+    "task": "side",
+    "server": "CUHK",
+    "remote": "/data/wangfeng/supermimic_vibed/logs/rsl_rl/supermimic_open_door_side/2026-11-01_01-14-42_right_side_clearance_1cm_fresh_ac",
+    "local": "logs/side_policy_playback/2026-11-01_01-14-42_fresh_ac_model10000"
+  }
+]

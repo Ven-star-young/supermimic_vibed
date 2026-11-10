@@ -1,0 +1,72 @@
+{
+  "norm_return": 0.9243851900100708,
+  "norm_return_framew": 0.9243851900100708,
+  "n_failed": 0,
+  "failed": [],
+  "per_clip": {
+    "video6_g1_door_video45_right_side_asset": 0.9243851900100708
+  },
+  "door_tracking": {
+    "scope": "executed_transitions_including_terminal_state; fixed_reference_phase",
+    "angle_rmse_rad": 0.007256124634295702,
+    "angular_velocity_rmse_radps": 0.07715416699647903,
+    "reference_completion_rate": 1.0,
+    "n_reference_completed": 1,
+    "per_clip": {
+      "video6_g1_door_video45_right_side_asset": {
+        "angle_rmse_rad": 0.007256124634295702,
+        "angular_velocity_rmse_radps": 0.07715416699647903,
+        "reference_completed": true,
+        "observed_transitions": 643,
+        "final_theta_rad": 0.7815331816673279,
+        "final_omega_radps": -0.00012679395149461925,
+        "ref_final_theta_rad": 0.7853981852531433,
+        "ref_final_omega_radps": 0.0
+      }
+    }
+  },
+  "door_contact": {
+    "source": "mujoco_warp.contact_force immediately after each physics step",
+    "scope": "executed_prefix_only; normal force summed per category and world",
+    "normal_force_threshold_n": 1.0,
+    "side_contact_region": {
+      "side": "right",
+      "allowed_bodies": [
+        "right_shoulder_pitch_link",
+        "right_shoulder_roll_link",
+        "right_elbow_link",
+        "right_wrist_roll_link"
+      ],
+      "torso_bodies": [
+        "torso_link",
+        "logo_link"
+      ],
+      "torso_patch_m": {
+        "y_max": -0.04,
+        "abs_x_max": 0.12,
+        "z_min": 0.02,
+        "z_max": 0.35
+      },
+      "samples_per_geom": 32,
+      "alignment": "torso_+Y_dot_panel_+X"
+    },
+    "allowed_side_substep_rate": 0.591368556022644,
+    "forbidden_door_substep_rate": 0.0,
+    "n_episodes_with_forbidden_contact": 0,
+    "per_clip": {
+      "video6_g1_door_video45_right_side_asset": {
+        "observed_substeps": 2572,
+        "allowed_side_substep_rate": 0.591368556022644,
+        "forbidden_door_substep_rate": 0.0,
+        "ever_forbidden_contact": false
+      }
+    }
+  },
+  "checkpoint": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/side_policy_playback/2026-11-01_01-14-42_fresh_ac_model10000/model_10000_actor.pt",
+  "checkpoint_iteration": 10000,
+  "motion": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/data/motions/open_door_prepared/video6_g1_door_video45_right_side_asset.npz",
+  "motion_sha256": "e8de3812b9f985cb5ce1a444270d351420dd66a1d344a69d537f6d3b979f661a",
+  "source_motion_py_sha256": "e1ac9bd8d8cfe473ed9a8c7d03e89664c755e40334a6b14a4d911a14f6c1c3c5",
+  "physics_samples": 2573,
+  "physical_duration_s": 12.86
+}

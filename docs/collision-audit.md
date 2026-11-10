@@ -116,7 +116,6 @@ body 原点检查并不代表整个机器人都没有真实穿透。
 ```bash
 uv run --extra motion python tools/prepare_collisions.py /path/to/motion.npz
 uv run python tools/check_collisions.py /path/to/motion.npz --render
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run --extra motion pytest tests/test_g1_collision.py tests/test_object_collision.py -q
 ```
 
 本地数值证据与图片位于 `results/analysis/collision/`：

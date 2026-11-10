@@ -38,10 +38,18 @@ class DoorMotionLib(MotionLib):
             i = time.floor().long().clamp(max=len(angle) - 2)
             alpha = (time - i).clamp(0, 1).float()
             angle = torch.lerp(angle[i], angle[i + 1], alpha)
+            source_opening = int(clip.get("door_opening_frame", 0))
+            first_open_control = int(np.ceil(
+                source_opening / float(clip["fps"]) / self.control_dt - 1e-9))
+            # Interpolating the first nonzero source sample otherwise opens
+            # the door one or two control ticks before the observed onset.
+            angle[:first_open_control] = 0
+            omega = _gradient(angle, self.control_dt)
+            # Reset/reference velocity must not anticipate the same event.
+            omega[:first_open_control] = 0
             angles.append(angle)
-            velocities.append(_gradient(angle, self.control_dt))
-            source_opening = clip.get("door_opening_frame", 0)
-            opening_frames.append(int(np.ceil(float(source_opening) / float(clip["fps"]) / self.control_dt)))
+            velocities.append(omega)
+            opening_frames.append(first_open_control)
         self.door_angle = torch.cat(angles).to(device)
         self.door_omega = torch.cat(velocities).to(device)
         self.door_opening_frames = torch.tensor(opening_frames, device=device)

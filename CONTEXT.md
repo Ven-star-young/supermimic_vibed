@@ -164,7 +164,7 @@ finite storage placeholders never enter WM statistics/loss or Actor starting sta
 and windows stop at the failed step. Normal physical terminal transitions remain valid.
 CSV/TensorBoard sim_invalid reports the failed fraction of collected transitions.
 
-## Checkpoints and retained tests/tools
+## Checkpoints and tools
 
 Sitting schema4 identifies model/coordinate/reward semantics, independently of scene ID.
 Full checkpoints contain pi/wm/critic, optimizer states, geometry_bank, policy_config,
@@ -177,7 +177,5 @@ rejects changed distributions and legacy fixed-physics schema1. Evaluation resto
 settings before constructing the scene, while play mode still disables sampling.
 
 Tools retain source conversion, kinematic replay, collision preparation/checks, reference
-selection, split generation, plotting and trajectory rendering. Test helpers live under
-tests/. One-off diagnostics stay on the historical branch. Tests protect coordinate and
-clock conventions, gradients, physical transitions, reset/variants/collisions, train/heldout
-separation, checkpoint roundtrips and multi-process synchronization.
+selection, split generation, plotting and trajectory rendering. Temporary validation
+scripts and one-off diagnostics belong outside the project directory.

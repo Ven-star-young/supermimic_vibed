@@ -1,0 +1,3 @@
+file '/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/sitting/sitting_grid.mp4'
+file '/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/back_clean.mp4'
+file '/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/side_clean.mp4'

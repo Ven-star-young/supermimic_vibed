@@ -11,6 +11,8 @@ Original implementation: **Chong Zhang** (ETH Zurich). Code license: [MIT](LICEN
 仿真使用 **mjlab 1.6.0 + MuJoCo-Warp**，控制50Hz、物理200Hz。
 历史 Isaac Lab 训练结果见 [MILESTONES.md](MILESTONES.md)，不代表此分支的模型性能。
 
+本地保留的最终 checkpoint、完整训练日志、评估和视频见 [最终模型索引](docs/final-models.md)。
+
 ## 网络与代码
 
 | 任务 | Actor 单帧动态观测 | Actor 解码器 | WM | Critic |
@@ -138,21 +140,17 @@ Actor/Critic和优化器从头初始化。`wm_only_iters=0`，从第1轮共同�
 轨迹须包含 `door_contact_region="right_side"`；混入背部数据会报错。
 使用环境变量指定服务器数据时，应给侧面单个NPZ路径。详见[侧面工作流](docs/open-door-side-workflow.md)。
 
-## 部署与验证
+## 部署与评估
 
 ```bash
 .venv/bin/python -m supermimic.scripts.play_policy \
   --checkpoint logs/sitting_task/model_200.pt --partition train --index 0
-
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 OMP_NUM_THREADS=4 .venv/bin/python -m pytest -q
 ```
 
 部署只创建冻结Actor，保留当前椅子的点云；支持clean/perturbed初始化、随机参考帧、
 所选reference和未见椅型。`--evaluate --partition all --seeds 0 1 2 3 4`生成完整执行与
 严格稳定接触成功率；`--browse --port 8088`打开可切换reference及扰动的页面。
 具体参数、成功判据和输出说明见[工作流](docs/sitting-workflow.md)。
-回归覆盖状态/参考坐标、梯度、优化器归属、真实接触与reset、混合椅型、保存续训及
-多进程同步。通过这些检查说明训练链路可运行，不代表已经得到收敛策略。
 
 原Tracking仍使用原生mjlab入口：
 

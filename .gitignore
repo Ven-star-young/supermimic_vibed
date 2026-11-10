@@ -18,6 +18,9 @@ logs/
 # rendered videos and recorded trajectories (derived from CC BY-NC-ND LAFAN1 motions)
 *.mp4
 *.npz
+# generated simulation scenes and render logs
+results/**/*.mjb
+results/**/*.log
 results/analysis/
 # third-party paper
 *.pdf

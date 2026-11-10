@@ -1,0 +1,27 @@
+{
+  "final_checkpoints": [
+    {
+      "checkpoint": "logs/cuhk_sitting_deployment/model_10000.pt",
+      "iteration": 10000,
+      "task": "g1_sitting",
+      "full_checkpoint": true
+    },
+    {
+      "checkpoint": "logs/wm_transfer/back_model_10000.pt",
+      "iteration": 10000,
+      "task": "g1_open_door",
+      "full_checkpoint": true
+    },
+    {
+      "checkpoint": "logs/side_policy_playback/2026-11-01_01-14-42_fresh_ac_model10000/model_10000.pt",
+      "iteration": 10000,
+      "task": "g1_open_door_side",
+      "full_checkpoint": true
+    }
+  ],
+  "final_csv_last_iteration": 10000,
+  "video_assembly_inputs_exist": true,
+  "recorded_scene_and_reference_dependencies_exist": true,
+  "original_source_edits_unchanged": true,
+  "old_no_reference_project_removed": true
+}

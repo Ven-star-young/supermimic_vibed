@@ -22,12 +22,6 @@ build-backend = "uv_build"
 module-name = ["supermimic", "motion_data"]
 module-root = ""
 
-[dependency-groups]
-dev = ["pytest>=8"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-
 [project.entry-points."mjlab.tasks"]
 supermimic = "supermimic.tasks"
 

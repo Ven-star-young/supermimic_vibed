@@ -1,0 +1,17 @@
+;FFMETADATA1
+title=G1 Sitting and Door Opening
+[CHAPTER]
+TIMEBASE=1/1000
+START=0
+END=6000
+title=Sitting: 0, 8, 10, 13, 14, 19, 28, 34, 45
+[CHAPTER]
+TIMEBASE=1/1000
+START=6000
+END=15200
+title=Back door opening
+[CHAPTER]
+TIMEBASE=1/1000
+START=15200
+END=29120
+title=Side door opening

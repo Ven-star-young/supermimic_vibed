@@ -1,0 +1,744 @@
+{
+  "removed": [
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/native_cli_smoke",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 410058,
+      "files": 11
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/data_transfer_cuhk_side",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 1537,
+      "files": 2
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/open_door_side_data_check",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 1589662,
+      "files": 6
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/origin_audit_20261028_agent",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 213163,
+      "files": 3
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/open_door_cuhk_launch",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 57447,
+      "files": 8
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/6kmodel.mp4",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 3697486,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/diagnostics",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 83063008,
+      "files": 7
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/cuhk_reference_training_monitor.json",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 2073,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/launcher_check",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 217,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/cuhk_sitting_review_20261028_074144",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 918294,
+      "files": 8
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/cuhk_dualgpu_validation_20261027",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 749429,
+      "files": 37
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/entity_architecture_smoke",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 124246,
+      "files": 9
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/task_sitting_smoke_20261028",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 347572,
+      "files": 12
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/open_door_side_review",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 653721,
+      "files": 3
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/chair_generalization_smoke",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 1249824,
+      "files": 14
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/sitting_analysis",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 733746,
+      "files": 14
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/2026-10-26_14-05-17",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 1032744290,
+      "files": 12
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/open_door_side_validation",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 261155,
+      "files": 4
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/cuhk_reference_deployment",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 723577216,
+      "files": 18
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/mixed_chair_validation_20261027",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 928,
+      "files": 3
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/mjlab_smoke",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 6551,
+      "files": 3
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/origin_audit_20261028_agent_seat",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 1226449,
+      "files": 3
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/cuhk_training_monitor.json",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 1483,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/cuhk_epa_visit43_20261027",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 525208,
+      "files": 17
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/mixed",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 183572382,
+      "files": 98
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/task_architecture_smoke",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 1100,
+      "files": 2
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/chair_split_check.json",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 12879,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/open_door_smoke_rollout.npz",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 74947,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/side_finetune_check",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 299682121,
+      "files": 188
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/cuhk_oom_visit27_20261027",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 821311,
+      "files": 17
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/side_clearance_validation",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 217,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/6kmodel.json",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 4989,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/cuhk_sitting_review_20261028",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 794790,
+      "files": 7
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/rsi_psi_research",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 5205062,
+      "files": 159
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/rsl_rl",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 3306955948,
+      "files": 66
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/data_transfer_cuhk",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 975429,
+      "files": 13
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/open_door_motion_recheck_20261031",
+      "reason": "Superseded experiment or intermediate diagnostics; final runs retained separately",
+      "bytes": 1530249,
+      "files": 10
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/side_policy_playback/2026-10-31_20-47-14_model10000",
+      "reason": "Old side policy superseded by fresh-AC final model",
+      "bytes": 223572297,
+      "files": 10
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/cuhk_sitting_deployment/policy_browser",
+      "reason": "Interactive playback cache/log",
+      "bytes": 5004361,
+      "files": 130
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/cuhk_sitting_deployment/browser.log",
+      "reason": "Interactive playback cache/log",
+      "bytes": 304,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/cuhk_sitting_deployment/browser_final.log",
+      "reason": "Interactive playback cache/log",
+      "bytes": 304,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/cuhk_sitting_deployment/browser_live.log",
+      "reason": "Interactive playback cache/log",
+      "bytes": 0,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/cuhk_sitting_deployment/browser_preview.jpg",
+      "reason": "Interactive playback cache/log",
+      "bytes": 113030,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/dist",
+      "reason": "Old build/test output or superseded generated visualization",
+      "bytes": 64310,
+      "files": 8
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/.pytest_cache",
+      "reason": "Old build/test output or superseded generated visualization",
+      "bytes": 58885,
+      "files": 5
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/analysis",
+      "reason": "Old build/test output or superseded generated visualization",
+      "bytes": 20362569,
+      "files": 123
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_kinematic.mp4",
+      "reason": "Old build/test output or superseded generated visualization",
+      "bytes": 267720,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_without_hands.mp4",
+      "reason": "Old build/test output or superseded generated visualization",
+      "bytes": 251908,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/supermimic_lafan1_highlight.gif",
+      "reason": "Old build/test output or superseded generated visualization",
+      "bytes": 5611088,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/success_curve.png",
+      "reason": "Old build/test output or superseded generated visualization",
+      "bytes": 117051,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/supermimic/__pycache__",
+      "reason": "Rebuildable Python cache",
+      "bytes": 43038,
+      "files": 16
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/supermimic/mdp/__pycache__",
+      "reason": "Rebuildable Python cache",
+      "bytes": 63372,
+      "files": 10
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/supermimic/scripts/__pycache__",
+      "reason": "Rebuildable Python cache",
+      "bytes": 136519,
+      "files": 8
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/supermimic/tasks/__pycache__",
+      "reason": "Rebuildable Python cache",
+      "bytes": 7976,
+      "files": 3
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/supermimic/assets/__pycache__",
+      "reason": "Rebuildable Python cache",
+      "bytes": 475,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/supermimic/rl/__pycache__",
+      "reason": "Rebuildable Python cache",
+      "bytes": 335678,
+      "files": 24
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/supermimic/tasks/open_door_side/__pycache__",
+      "reason": "Rebuildable Python cache",
+      "bytes": 23664,
+      "files": 10
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/supermimic/tasks/g1_tracking/__pycache__",
+      "reason": "Rebuildable Python cache",
+      "bytes": 18084,
+      "files": 5
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/supermimic/tasks/sitting/__pycache__",
+      "reason": "Rebuildable Python cache",
+      "bytes": 126366,
+      "files": 15
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/supermimic/tasks/entities/__pycache__",
+      "reason": "Rebuildable Python cache",
+      "bytes": 76343,
+      "files": 11
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/supermimic/tasks/interaction/__pycache__",
+      "reason": "Rebuildable Python cache",
+      "bytes": 44120,
+      "files": 8
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/supermimic/tasks/open_door/__pycache__",
+      "reason": "Rebuildable Python cache",
+      "bytes": 112317,
+      "files": 15
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/supermimic/assets/g1/__pycache__",
+      "reason": "Rebuildable Python cache",
+      "bytes": 20043,
+      "files": 3
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/motion_data/__pycache__",
+      "reason": "Rebuildable Python cache",
+      "bytes": 98164,
+      "files": 9
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/motion_data/converters/__pycache__",
+      "reason": "Rebuildable Python cache",
+      "bytes": 25301,
+      "files": 5
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/tools/__pycache__",
+      "reason": "Rebuildable Python cache",
+      "bytes": 288904,
+      "files": 22
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/tests/__pycache__",
+      "reason": "Rebuildable Python cache",
+      "bytes": 2051138,
+      "files": 77
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/logs/cuhk_eval_10000_perturbed_seed0_9_20261028/__pycache__",
+      "reason": "Rebuildable Python cache",
+      "bytes": 35197,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/sitting_back_side_contact.mp4",
+      "reason": "Superseded annotated video or intermediate camera preview",
+      "bytes": 5615262,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/video_manifest.json",
+      "reason": "Superseded annotated video or intermediate camera preview",
+      "bytes": 4600,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/concat.txt",
+      "reason": "Superseded annotated video or intermediate camera preview",
+      "bytes": 353,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/chapters.ffmetadata",
+      "reason": "Superseded annotated video or intermediate camera preview",
+      "bytes": 313,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/final_back_contact.png",
+      "reason": "Superseded annotated video or intermediate camera preview",
+      "bytes": 405552,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/final_back_other_contact.png",
+      "reason": "Superseded annotated video or intermediate camera preview",
+      "bytes": 432656,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/final_side_contact.png",
+      "reason": "Superseded annotated video or intermediate camera preview",
+      "bytes": 346863,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/clips",
+      "reason": "Superseded annotated video or intermediate camera preview",
+      "bytes": 0,
+      "files": 0
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/trajectories",
+      "reason": "Superseded annotated video or intermediate camera preview",
+      "bytes": 0,
+      "files": 0
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/back_contact.mp4",
+      "reason": "Superseded annotated video or intermediate camera preview",
+      "bytes": 1780639,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/side_contact.mp4",
+      "reason": "Superseded annotated video or intermediate camera preview",
+      "bytes": 2287579,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/render_contacts.py",
+      "reason": "Superseded annotated video or intermediate camera preview",
+      "bytes": 11675,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/clean_preview_contact_sheet.png",
+      "reason": "Superseded annotated video or intermediate camera preview",
+      "bytes": 109902,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/sitting/camera_check.png",
+      "reason": "Superseded annotated video or intermediate camera preview",
+      "bytes": 238864,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/sitting/camera_check2.png",
+      "reason": "Superseded annotated video or intermediate camera preview",
+      "bytes": 105625,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/back/clean_preview_1_az55.png",
+      "reason": "Intermediate rendered camera/annotation preview",
+      "bytes": 70320,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/back/qa_2_1040.png",
+      "reason": "Intermediate rendered camera/annotation preview",
+      "bytes": 228693,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/back/qa_final_simultaneous_contacts.png",
+      "reason": "Intermediate rendered camera/annotation preview",
+      "bytes": 432656,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/back/qa_3_1624.png",
+      "reason": "Intermediate rendered camera/annotation preview",
+      "bytes": 235591,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/back/clean_preview_0_az55.png",
+      "reason": "Intermediate rendered camera/annotation preview",
+      "bytes": 59437,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/back/qa_video_0.png",
+      "reason": "Intermediate rendered camera/annotation preview",
+      "bytes": 212627,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/back/qa_video_102.png",
+      "reason": "Intermediate rendered camera/annotation preview",
+      "bytes": 229256,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/back/clean_preview_1_az80.png",
+      "reason": "Intermediate rendered camera/annotation preview",
+      "bytes": 89948,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/back/clean_preview_2_az55.png",
+      "reason": "Intermediate rendered camera/annotation preview",
+      "bytes": 76623,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/back/clean_preview_1_az20.png",
+      "reason": "Intermediate rendered camera/annotation preview",
+      "bytes": 30287,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/back/clean_preview_0_az20.png",
+      "reason": "Intermediate rendered camera/annotation preview",
+      "bytes": 31623,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/back/clean_preview_2_az80.png",
+      "reason": "Intermediate rendered camera/annotation preview",
+      "bytes": 91367,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/back/qa_video_204.png",
+      "reason": "Intermediate rendered camera/annotation preview",
+      "bytes": 235624,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/back/qa_0_0.png",
+      "reason": "Intermediate rendered camera/annotation preview",
+      "bytes": 212626,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/back/qa_1_1166.png",
+      "reason": "Intermediate rendered camera/annotation preview",
+      "bytes": 234737,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/back/clean_preview_2_az20.png",
+      "reason": "Intermediate rendered camera/annotation preview",
+      "bytes": 44703,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/back/clean_preview_0_az80.png",
+      "reason": "Intermediate rendered camera/annotation preview",
+      "bytes": 72343,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/side/qa_3_2572.png",
+      "reason": "Intermediate rendered camera/annotation preview",
+      "bytes": 213116,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/side/clean_preview_2_az45.png",
+      "reason": "Intermediate rendered camera/annotation preview",
+      "bytes": 82244,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/side/clean_preview_0_az45.png",
+      "reason": "Intermediate rendered camera/annotation preview",
+      "bytes": 59420,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/side/qa_video_0.png",
+      "reason": "Intermediate rendered camera/annotation preview",
+      "bytes": 179873,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/side/qa_2_0.png",
+      "reason": "Intermediate rendered camera/annotation preview",
+      "bytes": 179866,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/side/clean_preview_0_az70.png",
+      "reason": "Intermediate rendered camera/annotation preview",
+      "bytes": 70135,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/side/qa_1_2037.png",
+      "reason": "Intermediate rendered camera/annotation preview",
+      "bytes": 207657,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/side/clean_preview_1_az20.png",
+      "reason": "Intermediate rendered camera/annotation preview",
+      "bytes": 50454,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/side/qa_video_161.png",
+      "reason": "Intermediate rendered camera/annotation preview",
+      "bytes": 203283,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/side/clean_preview_0_az20.png",
+      "reason": "Intermediate rendered camera/annotation preview",
+      "bytes": 39819,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/side/clean_preview_1_az70.png",
+      "reason": "Intermediate rendered camera/annotation preview",
+      "bytes": 81917,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/side/qa_final_shoulder.png",
+      "reason": "Intermediate rendered camera/annotation preview",
+      "bytes": 348723,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/side/qa_0_0.png",
+      "reason": "Intermediate rendered camera/annotation preview",
+      "bytes": 179867,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/side/clean_preview_1_az45.png",
+      "reason": "Intermediate rendered camera/annotation preview",
+      "bytes": 80802,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/side/clean_preview_2_az70.png",
+      "reason": "Intermediate rendered camera/annotation preview",
+      "bytes": 83070,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/side/qa_video_322.png",
+      "reason": "Intermediate rendered camera/annotation preview",
+      "bytes": 212920,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/side/clean_preview_2_az20.png",
+      "reason": "Intermediate rendered camera/annotation preview",
+      "bytes": 53396,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/render_side.log",
+      "reason": "Intermediate renderer console output",
+      "bytes": 200,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/render_side_preview.log",
+      "reason": "Intermediate renderer console output",
+      "bytes": 98,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/supermimic_vibed/results/sitting_open_door_montage/doors/render_back.log",
+      "reason": "Intermediate renderer console output",
+      "bytes": 177,
+      "files": 1
+    },
+    {
+      "path": "/home/frank/Robotics/Paper/Humanoid/open_door",
+      "reason": "Retired no-reference MBRL/PPO project; server repo/runs verified and 8 local work files additionally archived with SHA256 verification",
+      "bytes": 6848376971,
+      "files": 43009
+    }
+  ],
+  "logical_bytes_removed": 12775349065,
+  "free_bytes_before": 1795571712,
+  "free_bytes_after": 8024027136,
+  "actual_free_bytes_increase": 6228455424,
+  "protected_hashes": {
+    "logs/cuhk_sitting_deployment/model_8600.pt": "ba1942db588400e30e53fd4adb1989bb29cdd2ea8f523e7cbb84f3d3a874a706",
+    "logs/cuhk_sitting_deployment/model_10000.pt": "ecf44691bd5ea545d91a466d16a1f44ba109205216760f9dc660efbea70834c9",
+    "logs/wm_transfer/back_model_10000.pt": "b67840d91ab941fbc4aae0965f7b0a292883c52dd7da422874612c719ea01c0f",
+    "logs/side_policy_playback/2026-11-01_01-14-42_fresh_ac_model10000/model_10000.pt": "04582507133129ff631baee399db53458b1dbc09df098a3602a6de276794dfbd",
+    "logs/side_policy_playback/2026-11-01_01-14-42_fresh_ac_model10000/model_10000_actor.pt": "4c4fbbb30c2f2189b9eeecb0de94362af645bce9b704ec44e4636103a7dd9b5c",
+    "results/sitting_open_door_montage/sitting_back_side_clean.mp4": "15701c8136dbd2daa89faf7887cd69f170e0a1d880d79e8b7a315829a0d7f648"
+  },
+  "source_modifications_preserved": true,
+  "old_no_reference_project_removed": true
+}
