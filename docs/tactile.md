@@ -184,7 +184,9 @@ cfg.observations["tactile"] = ObservationGroupCfg(
 )
 ```
 
-现有 Runner 不会自动将新组拼入 Actor 或 WM；用触觉训练还需更新输入接口、网络和 checkpoint schema。
+SuperMimic Runner 不会自动将新组拼入 Actor 或 WM。
+已有的 [OpenDoor BC/DAgger 蒸馏](../supermimic/distillation/open_door/README.md) 单独读取
+10帧 counts 和有效性 mask，编码为64维特征接入学生 Actor；教师及世界模型保持原输入。
 
 ## 更新与缓存
 
