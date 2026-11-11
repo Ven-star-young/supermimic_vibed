@@ -14,7 +14,7 @@
   --config configs/open_door_dagger_observable.json
 ```
 
-默认读取背部开门教师 `logs/wm_transfer/back_model_10000.pt`，16 个并行环境，
+默认读取背部开门教师 `logs/wm_transfer/back_model_10000.pt`，并行环境数由 JSON 配置决定，
 输出至 `logs/open_door_dagger_tactile/`。训练使用原任务的随机初始化和物性分布，
 开始前从教师 checkpoint 恢复并核对任务配置。侧面任务可替换 `expert_checkpoint` 和
 `motion_dir` 为匹配的侧面模型及 NPZ；入口按 checkpoint 的任务类型选择环境。
@@ -25,6 +25,28 @@
 `rounds`、`rollout_steps`、`train_epochs`、`updates_per_round` 控制 DAgger。
 每轮 beta 为 `beta_start + min(round_index / beta_decay_rounds, 1) * (beta_end - beta_start)`，
 `round_index` 从 0 开始；beta 表示每个环境选择教师动作的概率，不混合关节动作数值。
+
+无触觉对照使用 `configs/open_door_dagger_proprio.json`：仅将 `use_tactile` 设为
+`false`，输出目录改为 `logs/open_door_dagger_proprio/`，其余训练参数与触觉配置一致。
+学生不创建触觉编码器，Actor 输入为本体历史930维＋goal latent32维，共962维；
+触觉读数和有效性掩码均不参与动作计算。仿真中的传感器与现有日志仍保留作诊断，
+因此日志中有触觉读数不表示学生使用了触觉。
+
+当前两份正式配置将 `initialize_goal_from_teacher` 设为 `true`。训练开始时，学生复制教师的 `enc` 和
+`goal_norm` 参数及统计量；初始化完成后，`enc` 会继续参与 BC/DAgger 的梯度更新。
+首次 BC 更新前，`goal_norm` 统计量再和 BC 初始数据合并一次，之后由现有 normalizer
+生命周期保持不变。将该选项设为
+`false` 可进行随机目标编码器的消融实验。
+
+在 CUHK 项目根目录提交无触觉训练（共用现有 Slurm 脚本）：
+
+```bash
+mkdir -p logs/slurm
+sbatch --job-name=door-proprio-distill tools/distill_open_door.sbatch configs/open_door_dagger_proprio.json
+```
+
+Slurm 脚本的首个参数可选；省略时继续使用原触觉配置。每次运行在配置的输出目录下
+新建 `slurm-JOB_ID/`，保存该次配置和模型。
 
 ## 输入与编码
 
@@ -117,11 +139,22 @@ import torch
 from supermimic.distillation.open_door import OpenDoorStudentPolicy
 
 checkpoint = torch.load("logs/open_door_dagger_tactile/model_10.pt", weights_only=False)
-student = OpenDoorStudentPolicy().eval()
+student = OpenDoorStudentPolicy(use_tactile=checkpoint["config"].get("use_tactile", True)).eval()
 student.load_state_dict(checkpoint["student"], strict=True)
 with torch.no_grad():
     action = student(proprio_history, goal, tactile_history, tactile_valid)
 ```
 
-部署时必须使用同一布局、counts参数及10帧历史规则。这个checkpoint格式独立于教师，
-原教师回放工具不会自动将其识别为SuperMimic训练checkpoint。
+部署时必须使用同一布局、counts参数及10帧历史规则。现有触觉回放工具支持学生 checkpoint，
+会恢复保存的触觉映射，并在重置环境时清空触觉历史：
+
+```bash
+.venv/bin/python tools/play_tactile.py --task open_door \
+  --checkpoint logs/open_door_dagger_tactile/model_10.pt \
+  --reference data/motions/open_door_prepared/video1_g1_door_video45_centered_asset.npz
+```
+
+学生 checkpoint 仍使用独立格式；通用 SuperMimic Runner 不直接加载它。checkpoint 的
+`goal_encoder` 字段记录是否使用了教师初始化、`enc` 是否继续训练，以及归一化统计来源。
+无触觉模型保存为 `kind=open_door_proprio_student`，触觉输入及latent维度均为0；
+同一回放工具可加载它，画面中的触觉面板仅用于诊断。

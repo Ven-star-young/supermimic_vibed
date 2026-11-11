@@ -4,6 +4,7 @@ Run from the project root:
   .venv/bin/python tools/play_tactile.py --task sitting
   .venv/bin/python tools/play_tactile.py --task open_door
   .venv/bin/python tools/play_tactile.py --task open_door_side
+  .venv/bin/python tools/play_tactile.py --task open_door --checkpoint path/to/model_10.pt
 """
 from __future__ import annotations
 
@@ -24,6 +25,9 @@ from mjlab.tasks.registry import load_env_cfg, load_rl_cfg
 from mjlab.viewer import ViserPlayViewer
 
 from motion_data.chair_split import load_split
+from supermimic.distillation.open_door.models import (
+    OpenDoorStudentPolicy, TactileHistory, split_open_door_history,
+)
 from supermimic.rl.runner import SuperMimicRunner
 from supermimic.scripts import play_policy
 from supermimic.scripts.evaluate import _policy_config, _restore_open_door_config
@@ -47,16 +51,18 @@ ZONE_LABELS = {"chest": "Chest", "back": "Back", "left_arm": "Left arm",
 def build_parser():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--task", choices=tuple(PRESETS), default="sitting")
-    parser.add_argument("--checkpoint", type=Path, help="Override the retained final policy")
+    parser.add_argument("--checkpoint", type=Path, help="Teacher policy or OpenDoor student checkpoint")
     parser.add_argument("--reference", type=Path, help="One task-compatible motion NPZ")
     parser.add_argument("--split", type=Path, help="Sitting training split; defaults to the checkpoint's sibling")
     parser.add_argument("--data-root", type=Path, help="Relocated Sitting motion data")
     parser.add_argument("--partition", choices=("train", "test", "all"), default="all")
     parser.add_argument("--index", type=int, default=0, help="Sitting reference index within the sorted partition")
-    parser.add_argument("--layout", choices=("original_outer", "inner_arms_v1"), default="original_outer")
-    parser.add_argument("--counts-full-scale-mm", type=float, default=10.,
-                        help="Effective depth giving 255 synthetic counts (uncalibrated)")
-    parser.add_argument("--counts-exponent", type=float, default=1., help="Positive synthetic-count response exponent")
+    parser.add_argument("--layout", choices=("original_outer", "inner_arms_v1"),
+                        help="Defaults to the student's saved layout, or original_outer for teachers")
+    parser.add_argument("--counts-full-scale-mm", type=float,
+                        help="Effective depth giving 255 counts; defaults to the student setting or 10 mm")
+    parser.add_argument("--counts-exponent", type=float,
+                        help="Positive count exponent; defaults to the student setting or 1")
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--port", type=int, default=8089)
@@ -65,14 +71,58 @@ def build_parser():
 
 
 def load_deployment(args):
-    """Reuse the existing deployment contracts; allocate only the frozen Actor."""
-    response_cfg = G1TactileSensorCfg(name="tactile",
-        counts_full_scale_depth_m=args.counts_full_scale_mm / 1000., counts_exponent=args.counts_exponent)
+    """Return env, frozen policy, inference callable, checkpoint path, and reference.
+
+    Tactile student inference owns history; call its ``reset()`` after resetting
+    the environment. The viewer invokes this callback automatically.
+    """
     if args.task != "sitting" and (args.split or args.data_root or args.partition != "all" or args.index):
         raise ValueError("--split/--data-root/--partition/--index are Sitting options; use --reference for a door motion")
     default_checkpoint, task_id, default_reference = PRESETS[args.task]
     checkpoint_path = (args.checkpoint or ROOT / default_checkpoint).expanduser().resolve()
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    kind = checkpoint.get("kind")
+    student = kind in ("open_door_tactile_student", "open_door_proprio_student")
+    if student:
+        if args.task == "sitting":
+            raise ValueError("OpenDoor students require --task open_door or open_door_side")
+        saved = checkpoint["config"]
+        use_tactile = saved.get("use_tactile", True)
+        if type(use_tactile) is not bool or use_tactile != (kind == "open_door_tactile_student"):
+            raise ValueError("Student checkpoint kind and use_tactile config disagree")
+        expected = {"history_length": 10, "goal_frames": 10, "proprio_dim": 93,
+                    "tactile_channels": 112 if use_tactile else 0,
+                    "tactile_latent_dim": 64 if use_tactile else 0, "action_dim": 29,
+                    "history_order": "oldest_to_newest",
+                    "tactile_units": "uint8_counts" if use_tactile else None}
+        if checkpoint.get("schema_version") != 1 or checkpoint.get("policy_config") != expected:
+            raise ValueError("Unsupported OpenDoor student input schema")
+        response_cfg = G1TactileSensorCfg(name="tactile", layout=saved["tactile_layout"],
+            contact_distance_m=saved["tactile_contact_distance_m"],
+            counts_full_scale_depth_m=saved["tactile_counts_full_scale_depth_m"],
+            counts_exponent=saved["tactile_counts_exponent"])
+        metadata = checkpoint["tactile_metadata"]
+        response = metadata["counts_response"]
+        if (metadata["layout"] != response_cfg.layout
+                or metadata["contact_distance_m"] != response_cfg.contact_distance_m
+                or response["contact_distance_m"] != response_cfg.contact_distance_m
+                or response["full_scale_depth_m"] != response_cfg.counts_full_scale_depth_m
+                or response["exponent"] != response_cfg.counts_exponent):
+            raise ValueError("Student tactile config and saved sensor metadata disagree")
+        task_checkpoint = {"task": checkpoint["expert_task"]}
+    else:
+        response_cfg = G1TactileSensorCfg(name="tactile")
+        task_checkpoint = checkpoint
+    overrides = {}
+    if args.layout is not None:
+        overrides["layout"] = args.layout
+    if args.counts_full_scale_mm is not None:
+        overrides["counts_full_scale_depth_m"] = args.counts_full_scale_mm / 1000.
+    if args.counts_exponent is not None:
+        overrides["counts_exponent"] = args.counts_exponent
+    if student and use_tactile and any(getattr(response_cfg, key) != value for key, value in overrides.items()):
+        print("Warning: explicit tactile overrides change the student's training input mapping.", flush=True)
+    response_cfg = replace(response_cfg, **overrides)
     manifest = None
     if args.task == "sitting":
         options = play_policy.build_parser().parse_args(["--checkpoint", str(checkpoint_path)])
@@ -87,9 +137,11 @@ def load_deployment(args):
         cfg = play_policy.make_deployment_cfg(checkpoint, reference, options)
         train_cfg = checkpoint["train_cfg"]
     else:
-        reference = (args.reference or ROOT / default_reference).expanduser().resolve()
+        saved_reference = Path(checkpoint["config"]["motion_dir"]).expanduser() if student else None
+        reference = (args.reference or (saved_reference if saved_reference is not None and saved_reference.is_file()
+                                       else ROOT / default_reference)).expanduser().resolve()
         cfg = load_env_cfg(task_id, play=True)
-        _restore_open_door_config(cfg, checkpoint)
+        _restore_open_door_config(cfg, task_checkpoint)
         command = cfg.commands["motion"]
         command.motion_dir = str(reference)
         command.motion_files = ()
@@ -100,19 +152,56 @@ def load_deployment(args):
     cfg.scene.num_envs, cfg.auto_reset, cfg.seed = 1, False, args.seed
     for sensor in cfg.scene.sensors:
         if sensor.name == "tactile":
-            sensor.layout = args.layout
+            sensor.layout = response_cfg.layout
+            sensor.contact_distance_m = response_cfg.contact_distance_m
             sensor.counts_full_scale_depth_m = response_cfg.counts_full_scale_depth_m
             sensor.counts_exponent = response_cfg.counts_exponent
     native = ManagerBasedRlEnv(cfg, device=args.device)
     try:
         env = RslRlVecEnvWrapper(native)
+        if student:
+            from supermimic.rl import models as rl_models
+            rl_models.AMP_DTYPE = None
+            native.command_manager.get_term("motion").task.validate_checkpoint(task_checkpoint)
+            sensor = native.scene["tactile"]
+            # Always enforce the channel ABI and backend semantics. Geometry may
+            # differ only when the user explicitly selected a different layout.
+            for key in ("backend", "channel_abi_sha256", "target_geom", "query_scope",
+                        "signed_distance_convention"):
+                if sensor.metadata[key] != metadata[key]:
+                    raise ValueError(f"Student tactile metadata mismatch: {key}")
+            if response_cfg.layout == metadata["layout"] and sensor.metadata["geometry_sha256"] != metadata["geometry_sha256"]:
+                raise ValueError("Student tactile point geometry differs from the saved layout")
+            for key in ("units", "distance", "formula", "channel_pooling", "invalid_counts"):
+                if sensor.metadata["counts_response"][key] != response[key]:
+                    raise ValueError(f"Student tactile response mismatch: {key}")
+            policy = OpenDoorStudentPolicy(use_tactile=use_tactile).to(args.device)
+            policy.load_state_dict(checkpoint["student"], strict=True)
+            policy.eval().requires_grad_(False)
+            history = TactileHistory(native.num_envs, native.device) if use_tactile else None
+
+            @torch.no_grad()
+            def inference(observations):
+                proprio = split_open_door_history(observations["policy_history"])
+                if history is None:
+                    return policy(proprio, observations["goal"])
+                sensor.update(0.)
+                reading = sensor.data
+                counts, valid = history.update(reading.channel_counts, reading.channel_valid,
+                                               native.common_step_counter)
+                return policy(proprio, observations["goal"], counts, valid)
+
+            if history is not None:
+                inference.reset = history.reset
+            return env, policy, inference, checkpoint_path, reference
         runner = SuperMimicRunner(env, train_cfg | {"amp": "none", "no_compile": True}, device=args.device)
         if manifest is not None:
             play_policy.load_actor(runner, checkpoint, manifest)
         else:
             runner.load(str(checkpoint_path), load_cfg={"actor": True}, map_location=args.device)
         runner.pi.eval().requires_grad_(False)
-        return env, runner, checkpoint_path, reference
+        assert runner.wm is runner.critic is runner.buffer is None
+        return env, runner.pi, runner.get_inference_policy(), checkpoint_path, reference
     except BaseException:
         native.close()
         raise
@@ -196,11 +285,14 @@ def channel_image(distance_mm, contact, valid, zones, mode, limit_mm, counts, *,
 
 
 class TactileViewer(ViserPlayViewer):
-    def __init__(self, env, policy, server, checkpoint, reference, *, paused=False):
+    def __init__(self, env, policy, server, checkpoint, reference, *, paused=False, mapping_locked=False,
+                 tactile_diagnostic_only=False):
         super().__init__(env, policy, viser_server=server)
         self.cfg = replace(self.cfg, elevation=20., azimuth=120., distance=2.8)
         self.checkpoint, self.reference = checkpoint, reference
         self._is_paused, self._restart_at, self._episode = paused, None, 1
+        self._mapping_locked = mapping_locked
+        self._tactile_diagnostic_only = tactile_diagnostic_only
         abi = ROOT / "supermimic/assets/g1/tactile/upper-body-channel-layout.json"
         self.zones = json.loads(abi.read_text())["zones"]
 
@@ -209,7 +301,9 @@ class TactileViewer(ViserPlayViewer):
         gui = self._server.gui
         tactile_cfg = self.env.unwrapped.scene["tactile"].cfg
         # Keep tactile output above the stock tabs, visible alongside playback controls.
-        with gui.add_folder("G1 Tactile", order=-1):
+        with gui.add_folder("G1 Tactile (diagnostic only)" if self._tactile_diagnostic_only else "G1 Tactile", order=-1):
+            if self._tactile_diagnostic_only:
+                gui.add_markdown("**Proprioception-only student:** tactile values are displayed for diagnostics and are not policy inputs.")
             self._summary = gui.add_markdown("")
             playback = gui.add_button_group("Playback", ("Play / Pause", "Step", "Reset"))
 
@@ -232,15 +326,16 @@ class TactileViewer(ViserPlayViewer):
                 self._mode = gui.add_dropdown("Output", ("Counts (0-255)", "Distance (mm)", "Contact"))
                 self._full_scale = gui.add_number("Counts full-scale depth (mm)",
                     initial_value=tactile_cfg.counts_full_scale_depth_m * 1000., min=0., step=.1,
-                    hint="Smaller positive depths give higher synthetic counts.")
+                    disabled=self._mapping_locked, hint="Smaller positive depths give higher synthetic counts.")
                 self._exponent = gui.add_number("Counts exponent", initial_value=tactile_cfg.counts_exponent,
-                    min=0., step=.1, hint="Below 1 increases low responses; above 1 reduces them.")
+                    min=0., step=.1, disabled=self._mapping_locked,
+                    hint="Below 1 increases low responses; above 1 reduces them.")
                 self._limit = gui.add_slider("Color range (mm)", min=4., max=100., step=1., initial_value=20.)
                 self._points = gui.add_checkbox("Show 464 points", initial_value=True)
                 self._loop = gui.add_checkbox("Loop policy", initial_value=True)
                 gui.add_markdown(f"**Policy:** {html.escape(self.checkpoint.name)}\n\n"
                                  f"**Reference:** {html.escape(self.reference.name)}\n\n"
-                                 "Open surfaces use proximity only. Contact threshold: 4 mm.")
+                                 f"Open surfaces use proximity only. Contact threshold: {tactile_cfg.contact_distance_m * 1000:g} mm.")
             for control in (self._mode, self._limit, self._points, self._full_scale, self._exponent,
                             self._raw_ids, self._channel):
                 control.on_update(lambda _: self.request_action("CUSTOM", "tactile_redraw"))
@@ -314,20 +409,22 @@ class TactileViewer(ViserPlayViewer):
         # UI callbacks only request a redraw. Apply mapping edits on this main thread.
         full_scale_mm, exponent = self._full_scale.value, self._exponent.value
         valid_mapping = True
-        try:
-            response_cfg = replace(sensor.cfg, counts_full_scale_depth_m=full_scale_mm / 1000.,
-                                   counts_exponent=exponent)
-        except ValueError:
-            valid_mapping = False
-            self._full_scale.value = full_scale_mm = sensor.cfg.counts_full_scale_depth_m * 1000.
-            self._exponent.value = exponent = sensor.cfg.counts_exponent
-        else:
-            sensor.cfg.counts_full_scale_depth_m = response_cfg.counts_full_scale_depth_m
-            sensor.cfg.counts_exponent = response_cfg.counts_exponent
+        if not self._mapping_locked:
+            try:
+                response_cfg = replace(sensor.cfg, counts_full_scale_depth_m=full_scale_mm / 1000.,
+                                       counts_exponent=exponent)
+            except ValueError:
+                valid_mapping = False
+                self._full_scale.value = full_scale_mm = sensor.cfg.counts_full_scale_depth_m * 1000.
+                self._exponent.value = exponent = sensor.cfg.counts_exponent
+            else:
+                sensor.cfg.counts_full_scale_depth_m = response_cfg.counts_full_scale_depth_m
+                sensor.cfg.counts_exponent = response_cfg.counts_exponent
         self._counts_description.content = (
             f"**Synthetic counts / uncalibrated** · Full-scale depth **{full_scale_mm:g} mm** · "
             f"Exponent **{exponent:g}**\n\n"
             "Smaller full-scale depth raises sensitivity. Color scale stays at 0–255."
+            + ("\n\nMapping is fixed during student playback." if self._mapping_locked else "")
             + ("\n\nMapping parameters are outside the supported positive range; previous values restored." if not valid_mapping else ""))
         sensor.update(0.)
         reading = sensor.data
@@ -381,19 +478,23 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     if not 1 <= args.port <= 65535 or args.index < 0 or not 0 <= args.seed < 2**32:
         raise ValueError("Invalid port, reference index or seed")
-    env, runner, checkpoint, reference = load_deployment(args)
+    env, policy, inference, checkpoint, reference = load_deployment(args)
     server = None
-    before = play_policy.policy_digest(runner.pi)
+    before = play_policy.policy_digest(policy)
+    student = isinstance(policy, OpenDoorStudentPolicy)
+    diagnostic_only = student and not policy.use_tactile
     try:
-        server = viser.ViserServer(host="127.0.0.1", port=args.port, label="G1 Policy + Tactile")
-        viewer = TactileViewer(env, runner.get_inference_policy(), server, checkpoint, reference, paused=args.paused)
+        server = viser.ViserServer(host="127.0.0.1", port=args.port,
+            label="G1 Proprio Policy / Tactile Diagnostics" if diagnostic_only else "G1 Policy + Tactile")
+        viewer = TactileViewer(env, inference, server, checkpoint, reference, paused=args.paused,
+                              mapping_locked=student and policy.use_tactile,
+                              tactile_diagnostic_only=diagnostic_only)
         print(f"[{args.task}] {checkpoint}\nReference: {reference}\nOpen http://127.0.0.1:{server.get_port()}", flush=True)
         viewer.run()
         if viewer._last_error:
             raise RuntimeError(viewer._last_error)
-        if play_policy.policy_digest(runner.pi) != before:
+        if play_policy.policy_digest(policy) != before:
             raise RuntimeError("Policy parameters changed during deployment")
-        assert runner.wm is runner.critic is runner.buffer is None
     finally:
         if server is not None:
             server.stop()

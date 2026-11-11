@@ -160,17 +160,23 @@ class OpenDoorStudentPolicy(_BasePolicy):
         normalized 29-D joint action consumed by the existing action manager.
     """
 
-    def __init__(self, history_length: int = HISTORY_LENGTH, goal_frames: int = HISTORY_LENGTH):
+    def __init__(self, history_length: int = HISTORY_LENGTH, goal_frames: int = HISTORY_LENGTH,
+                 *, use_tactile: bool = True):
         if history_length != HISTORY_LENGTH:
             raise ValueError("The first OpenDoor student contract requires history_length=10")
+        if not isinstance(use_tactile, bool):
+            raise ValueError("use_tactile must be boolean")
         super().__init__(
             obs_dim=PROPRIO_DIM,
             goal_dim=75 * goal_frames,
             hist=history_length,
             action_dim=ACTION_DIM,
         )
-        self.tactile_encoder = TactileEncoder(history_length)
-        self.dec[0] = nn.Linear(self.dec[0].in_features + TACTILE_LATENT_DIM, self.dec[0].out_features)
+        self.use_tactile = use_tactile
+        self.goal_initialized_from_teacher = False
+        self.tactile_encoder = TactileEncoder(history_length) if use_tactile else None
+        if use_tactile:
+            self.dec[0] = nn.Linear(self.dec[0].in_features + TACTILE_LATENT_DIM, self.dec[0].out_features)
 
     @torch.no_grad()
     def initialize_goal_from_expert(self, expert: nn.Module) -> None:
@@ -181,23 +187,28 @@ class OpenDoorStudentPolicy(_BasePolicy):
             if source is None or target is None:
                 raise TypeError(f"Expert lacks compatible {name} module")
             target.load_state_dict(source.state_dict())
+        self.goal_initialized_from_teacher = True
 
     def forward(self, proprio_history: torch.Tensor, goal: torch.Tensor,
-                tactile_history: torch.Tensor, tactile_valid: torch.Tensor):
+                tactile_history: torch.Tensor | None = None, tactile_valid: torch.Tensor | None = None):
         history = _as_history(
             proprio_history,
             frame_dim=PROPRIO_DIM,
             history_length=self.hist,
         )
         if (goal.ndim != 2 or goal.shape[-1] != self.goal_norm.mean.numel()
-                or goal.shape[0] != history.shape[0] or tactile_history.shape[0] != history.shape[0]):
+                or goal.shape[0] != history.shape[0]):
             raise ValueError(
                 f"Expected goal [B,{self.goal_norm.mean.numel()}], got {tuple(goal.shape)}"
             )
         goal_latent = torch.tanh(run_mlp(self.enc, self.goal_norm(goal)))
         proprio = self.obs_norm(history).flatten(-2)
-        tactile = self.tactile_encoder(tactile_history, tactile_valid)
-        return run_mlp(self.dec, torch.cat((goal_latent, proprio, tactile), dim=-1))
+        features = [goal_latent, proprio]
+        if self.use_tactile:
+            if tactile_history is None or tactile_valid is None or tactile_history.shape[0] != history.shape[0]:
+                raise ValueError("Tactile students require counts and validity for every observation")
+            features.append(self.tactile_encoder(tactile_history, tactile_valid))
+        return run_mlp(self.dec, torch.cat(features, dim=-1))
 
 
 class FrozenOpenDoorExpert(nn.Module):

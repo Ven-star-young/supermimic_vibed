@@ -48,6 +48,8 @@ class DaggerCoordinator:
                  dataset: OpenDoorDaggerDataset | None = None,
                  config: OpenDoorDaggerConfig | None = None, *, device=None):
         self.config = config or OpenDoorDaggerConfig()
+        if student.use_tactile != self.config.use_tactile:
+            raise ValueError("Student tactile input must match the DAgger configuration")
         self.expert = expert.eval()
         self.student = student
         self.dataset = dataset if dataset is not None else OpenDoorDaggerDataset(

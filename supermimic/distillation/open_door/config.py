@@ -25,6 +25,8 @@ class OpenDoorDaggerConfig:
     output_dir: str = "logs/open_door_dagger_tactile"
     motion_dir: str = "data/motions/open_door_prepared/video1_g1_door_video45_centered_asset.npz"
     num_envs: int = 16
+    use_tactile: bool = True
+    initialize_goal_from_teacher: bool = False
     tactile_layout: str = "original_outer"
     tactile_contact_distance_m: float = 0.004
     tactile_counts_full_scale_depth_m: float = 0.010
@@ -54,6 +56,10 @@ class OpenDoorDaggerConfig:
             raise ValueError("OpenDoor distillation requires history10/proprio93/expert102/goal750/action29")
         if self.num_envs < 1:
             raise ValueError("num_envs must be positive")
+        if not isinstance(self.use_tactile, bool):
+            raise ValueError("use_tactile must be boolean")
+        if not isinstance(self.initialize_goal_from_teacher, bool):
+            raise ValueError("initialize_goal_from_teacher must be boolean")
         if self.tactile_layout not in ("original_outer", "inner_arms_v1"):
             raise ValueError("Unknown tactile layout")
         from ...tactile import G1TactileSensorCfg

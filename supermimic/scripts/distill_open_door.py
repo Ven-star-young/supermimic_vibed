@@ -91,13 +91,21 @@ def save_student(path, coordinator, sensor, checkpoint, metrics):
     """Save the deployable student, input schema and tactile provenance."""
     config = coordinator.config
     torch.save({
-        "kind": "open_door_tactile_student", "schema_version": 1,
+        "kind": "open_door_tactile_student" if config.use_tactile else "open_door_proprio_student",
+        "schema_version": 1,
         "student": coordinator.student.state_dict(),
         "policy_config": {"history_length": 10, "goal_frames": 10, "proprio_dim": 93,
-                          "tactile_channels": 112, "tactile_latent_dim": 64, "action_dim": 29,
-                          "history_order": "oldest_to_newest", "tactile_units": "uint8_counts"},
+                          "tactile_channels": 112 if config.use_tactile else 0,
+                          "tactile_latent_dim": 64 if config.use_tactile else 0, "action_dim": 29,
+                          "history_order": "oldest_to_newest",
+                          "tactile_units": "uint8_counts" if config.use_tactile else None},
         "config": config.to_dict(), "expert_checkpoint": str(Path(config.expert_checkpoint).resolve()),
         "expert_task": checkpoint["task"], "tactile_metadata": sensor.metadata,
+        "goal_encoder": {
+            "initialized_from_teacher": bool(coordinator.student.goal_initialized_from_teacher),
+            "encoder_parameters_trainable_after_initialization": True,
+            "normalizer_statistics": "teacher_then_bc_initialization",
+        },
         "metrics": metrics,
     }, path)
 
@@ -113,7 +121,9 @@ def train(config):
         env.command_manager.get_term("motion").task.validate_checkpoint(checkpoint)
         expert = FrozenOpenDoorExpert(Policy().to(config.device))
         expert.load_checkpoint(checkpoint)
-        student = OpenDoorStudentPolicy().to(config.device)
+        student = OpenDoorStudentPolicy(use_tactile=config.use_tactile).to(config.device)
+        if config.initialize_goal_from_teacher:
+            student.initialize_goal_from_expert(expert.expert)
         coordinator = DaggerCoordinator(expert, student, config=config, device=config.device)
         history = TactileHistory(config.num_envs, device=config.device)
         env.reset()
