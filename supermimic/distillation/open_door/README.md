@@ -91,7 +91,7 @@ Actor保留原本体／goal归一化、goal编码器及decoder隐层，输入为
 `STUDENT_INPUT_DIM=930` 仍表示本体历史长度，完整decoder输入是1026。
 触觉latent只拼接一次；默认教师保持原网络，可选触觉expert需先单独在RL阶段训练。
 蒸馏不更新教师，也不训练世界模型或Critic。
-新增学生从头训练，动作仍由现有action manager转换：
+学生动作解码器及触觉编码器从头训练，goal分支按初始化配置处理；动作仍由现有action manager转换：
 
 ```text
 q_target = q_default + calibration_offset + joint_scale * action
@@ -161,7 +161,35 @@ with torch.no_grad():
   --reference data/motions/open_door_prepared/video1_g1_door_video45_centered_asset.npz
 ```
 
-学生 checkpoint 仍使用独立格式；通用 SuperMimic Runner 不直接加载它。checkpoint 的
+学生 checkpoint 仍使用独立格式；不能作为完整RL续训快照加载。checkpoint 的
 `goal_encoder` 字段记录是否使用了教师初始化、`enc` 是否继续训练，以及归一化统计来源。
 无触觉模型保存为 `kind=open_door_proprio_student`，触觉输入及latent维度均为0；
 同一回放工具可加载它，画面中的触觉面板仅用于诊断。
+
+## 蒸馏后继续 MBRL
+
+使用现有 `train_open_door` 入口继续优化学生：
+
+```bash
+.venv/bin/python -m supermimic.scripts.train_open_door --config configs/open_door_student_mbrl_tactile.json
+# 无触觉对照
+.venv/bin/python -m supermimic.scripts.train_open_door --config configs/open_door_student_mbrl_proprio.json
+```
+
+`training.student_checkpoint` 分别指向本地归档的
+`logs/open_door_dagger_tactile/cuhk-slurm-271/model_16.pt` 和
+`logs/open_door_dagger_proprio/cuhk-slurm-272/model_16.pt`；
+`training.teacher_checkpoint` 均指向 `logs/wm_transfer/back_model_10000.pt`。
+这两个来源必须同时指定，不能与 `wm_checkpoint` 或 `finetune_checkpoint` 混用。
+
+Actor完整继承学生的 `enc`、`dec`、可选触觉编码器及归一化统计，保留已经学到的goal编码。
+WM和Critic从教师初始化，包括各自的归一化统计，随后都继续更新；优化器和训练计数重新建立。
+训练改为想象轨迹上的奖励优化：真实仿真转移训练WM，想象轨迹的λ-return用于拟合Critic。
+Actor每帧仍只有本体93维及可选counts112/validity112，即93或317维；
+不读取当前门状态9维。完整物理state73/context46、955维Critic输入和奖励定义保持不变。
+
+两份配置使用单卡2048环境、WM/Actor batch各512、32步想象、64步Replay填充、
+`wm_only_iters=0`，保留MLP bf16及编译。产物是带 `pi`、`wm`、`critic` 和优化器状态的
+完整RL checkpoint；之后正常resume不依赖原始学生或教师文件。
+`tools/play_tactile.py` 同时支持蒸馏学生与新的RL checkpoint。
+CUHK路径覆盖及Slurm命令见[背部开门工作流](../../../docs/open-door-workflow.md#蒸馏学生继续-supermimic-mbrl)。

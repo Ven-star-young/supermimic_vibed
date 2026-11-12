@@ -36,7 +36,7 @@ class OpenDoorTask(TrackingTask):
 
     def make_policy(self, history_length, goal_frames, geometry_bank=None):
         return Policy(history_length=history_length, goal_frames=goal_frames,
-                      use_tactile=self.mdp.tactile is not None)
+                      use_tactile=self.mdp.tactile is not None, proprio_only=self.mdp.proprio_only)
 
     def make_world_model(self, geometry_bank=None, geometry_encoder=None):
         return WorldModel(dynamics=self.dynamics)
@@ -67,6 +67,9 @@ class OpenDoorTask(TrackingTask):
             "observation": asdict(self.mdp.observation_cfg),
             "termination": asdict(self.mdp.termination_cfg),
         }
+        if self.mdp.proprio_only:
+            metadata["actor_observation_mode"] = "proprio"
+            metadata["actor_observation"] = "robot93"
         if self.mdp.tactile is not None:
             metadata["tactile"] = self.mdp.tactile.metadata
             metadata["actor_observation"] += ",tactile_counts112,tactile_valid112"
@@ -120,6 +123,45 @@ class OpenDoorTask(TrackingTask):
         if differences:
             raise ValueError(f"OpenDoor world-model checkpoint mismatch: {', '.join(differences)}")
 
+    def validate_student_initialization(self, student, teacher):
+        """Reuse a DAgger actor and teacher dynamics/value under the same task."""
+        if self.name != "g1_open_door" or not self.mdp.proprio_only:
+            raise ValueError("Student MBRL initialization requires back-opening with actor_observation=proprio")
+        if teacher.get("train_cfg", {}).get("no_critic", False):
+            raise ValueError("Teacher checkpoint must contain a trained Critic")
+        use_tactile = self.mdp.tactile is not None
+        expected_kind = "open_door_tactile_student" if use_tactile else "open_door_proprio_student"
+        expected_policy = {"history_length": 10, "goal_frames": 10, "proprio_dim": 93,
+                           "tactile_channels": 112 if use_tactile else 0,
+                           "tactile_latent_dim": 64 if use_tactile else 0, "action_dim": 29,
+                           "history_order": "oldest_to_newest",
+                           "tactile_units": "uint8_counts" if use_tactile else None}
+        if (student.get("kind") != expected_kind or student.get("schema_version") != 1
+                or student.get("policy_config") != expected_policy):
+            raise ValueError("Student checkpoint input schema does not match the MBRL actor")
+        current = self.checkpoint_metadata()
+        canonical = lambda value: json.dumps(value, sort_keys=True, allow_nan=False)
+        for label, source in (("student", student.get("expert_task")), ("teacher", teacher.get("task"))):
+            self.validate_world_model_checkpoint({"task": source})
+            fields = ("name", "door_physics", "door_randomization", "door_reward", "robot_reward",
+                      "observation", "termination", "actor_goal")
+            if any(canonical(source.get(key)) != canonical(current[key]) for key in fields):
+                raise ValueError(f"{label} checkpoint task, physics, reward or observation contract differs")
+            if source["dimensions"].get("critic_features") != self.dimensions.critic_features:
+                raise ValueError(f"{label} checkpoint Critic feature schema differs")
+            if source["dimensions"].get("goal_per_frame") != self.dimensions.goal_per_frame:
+                raise ValueError(f"{label} checkpoint goal feature schema differs")
+        if use_tactile:
+            source = student.get("tactile_metadata", {})
+            target = self.mdp.tactile.metadata
+            for key in ("layout", "geometry_sha256", "channel_abi_sha256", "target_geom"):
+                if source.get(key) != target[key]:
+                    raise ValueError(f"Student tactile input differs: {key}")
+            response = source.get("counts_response", {})
+            for key in ("contact_distance_m", "full_scale_depth_m", "exponent", "units"):
+                if response.get(key) != target[key]:
+                    raise ValueError(f"Student tactile mapping differs: {key}")
+
 
 def build_task(motion_dir=None, *, device="cuda:0", play=False, motion=None, kin=None, cfg=None,
                task_cls=OpenDoorTask):
@@ -128,6 +170,8 @@ def build_task(motion_dir=None, *, device="cuda:0", play=False, motion=None, kin
         cfg = make_env_cfg(play)
     validate_env_cfg(cfg)
     command = cfg.commands["motion"]
+    if command.actor_observation == "proprio" and task_cls.task_name != "g1_open_door":
+        raise ValueError("Student MBRL currently supports back-opening only")
     kin = G1Kinematics(device) if kin is None else kin
     if motion is None:
         selected = replace(command, motion_dir=motion_dir) if motion_dir is not None else command
@@ -160,6 +204,7 @@ def build_task(motion_dir=None, *, device="cuda:0", play=False, motion=None, kin
         control_dt=cfg.sim.mujoco.timestep * cfg.decimation,
         door_reward_cfg=command.door_reward_cfg,
         dynamics=dynamics, geometry=geometry, tactile=tactile,
+        proprio_only=command.actor_observation == "proprio",
     )
     return task_cls(task_cls.task_name, motion, mdp, dynamics, cfg,
                     modeled_entities=("robot", "door"))

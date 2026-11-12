@@ -123,6 +123,65 @@ CUHK作业285在单卡2048环境、WM/Actor batch各512、horizon32下完成两�
 训练完成后可在BC/DAgger配置中指定新 `expert_checkpoint`，同时设
 `expert_observation_dim=326`；学生本体仍只提取前93维，学生触觉开关独立控制。
 
+### 蒸馏学生继续 SuperMimic MBRL
+
+两份配置分别继续训练有触觉和无触觉的 DAgger 学生：
+
+| 配置 | `training.student_checkpoint` 默认值 |
+|---|---|
+| [`open_door_student_mbrl_tactile.json`](../configs/open_door_student_mbrl_tactile.json) | `logs/open_door_dagger_tactile/cuhk-slurm-271/model_16.pt` |
+| [`open_door_student_mbrl_proprio.json`](../configs/open_door_student_mbrl_proprio.json) | `logs/open_door_dagger_proprio/cuhk-slurm-272/model_16.pt` |
+
+两者的 `training.teacher_checkpoint` 默认都是 `logs/wm_transfer/back_model_10000.pt`。
+初始化时完整复制学生的 Actor、goal encoder、可选触觉编码器及归一化统计；
+WM、Critic及各自归一化统计从教师复制。三个网络随后按原SuperMimic循环继续更新，
+不重新用教师覆盖学生的goal encoder，也不冻结WM或Critic。优化器、迭代和采样计数从零开始，
+Replay重新采集；这一步是建立新的RL实验，不是恢复教师的训练进度。
+
+`task.actor_observation="proprio"` 限制真实采集和想象中的Actor每帧只读取前93维本体，
+有触觉时追加counts112和validity112，组成317维；无触觉时为93维。
+保留10帧历史及750维参考goal，decoder输入分别为1026和962维。
+当前门状态9维不会进入Actor；WM仍使用完整state73/context46，Critic输入仍为955维，
+奖励、终止和物性分布沿用背部expert。想象中的触觉由预测状态生成。
+
+两份配置采用单卡2048环境、WM/Actor batch各512、horizon32、Replay256步、
+每次10个WM batch和5轮Critic更新，保留学习率2e-4、MLP bf16及编译。
+`warmup_steps=64` 用于填充新Replay；由于WM与Critic已有教师权重，`wm_only_iters=0`，
+填充后即开始联合更新。两份配置的其余训练参数相同，使用独立实验名。
+
+```bash
+.venv/bin/python -m supermimic.scripts.train_open_door --config configs/open_door_student_mbrl_tactile.json --check
+.venv/bin/python -m supermimic.scripts.train_open_door --config configs/open_door_student_mbrl_tactile.json
+```
+
+CUHK上的checkpoint目录没有本地归档前缀 `cuhk-`，通过现有CLI覆盖来源和动作路径：
+
+```bash
+cd /home/wangfeng/supermimic_vibed
+mkdir -p logs/slurm
+sbatch --account=interns --partition=gpu --nodes=1 --ntasks=1 --gres=gpu:a100:1 \
+  --cpus-per-task=8 --mem=32G --time=24:00:00 \
+  --job-name=door-student-mbrl-tactile --output=logs/slurm/%x-%j.out \
+  --wrap='OMP_NUM_THREADS=8 PYTHONUNBUFFERED=1 .venv/bin/python -m supermimic.scripts.train_open_door --config configs/open_door_student_mbrl_tactile.json --agent.student-checkpoint logs/open_door_dagger_tactile/slurm-271/model_16.pt --agent.teacher-checkpoint /data/wangfeng/supermimic_vibed/logs/rsl_rl/supermimic_open_door/2026-10-31_17-06-12_back_tracking_dr_rsi/model_10000.pt --env.commands.motion.motion-dir /data/wangfeng/supermimic_open_door_tracking/data/motions/open_door_prepared/video1_g1_door_video45_centered_asset.npz'
+```
+
+无触觉实验将配置改为 `configs/open_door_student_mbrl_proprio.json`，学生来源改为
+`logs/open_door_dagger_proprio/slurm-272/model_16.pt`，并使用独立job名称。
+`student_checkpoint` 和 `teacher_checkpoint` 必须同时指定，不能与 `wm_checkpoint` 或
+`finetune_checkpoint` 混用；入口会校验学生输入、触觉映射与教师动力学/任务的一致性。
+
+新产物使用完整RL checkpoint格式，Actor保存在 `pi`，同时保存WM、Critic、优化器和训练计数。
+后续通过现有 `--agent.resume True`、`--agent.load-run`、`--agent.load-checkpoint` 恢复，
+不再需要读取最初的两个来源文件。回放同样使用现有工具：
+
+```bash
+.venv/bin/python tools/play_tactile.py --task open_door \
+  --checkpoint /absolute/path/student_mbrl/model_200.pt \
+  --reference data/motions/open_door_prepared/video1_g1_door_video45_centered_asset.npz
+```
+
+回放从RL checkpoint恢复Actor观测模式；无触觉策略的触觉面板仅用于诊断。
+
 ## 门物性随机化
 
 训练时每个环境在每次reset独立、均匀采样以下参数；一个episode内保持不变。

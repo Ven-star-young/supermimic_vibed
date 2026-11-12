@@ -54,12 +54,20 @@ class SuperMimicRunner:
         self._writer = self._wandb_run = None
         self.world_model_initialization = None
         self.finetune_initialization = None
+        self.student_initialization = None
         self._checkpoint_loaded = False
         self._validate_config()
 
     def _validate_config(self):
         if self.cfg.wm_checkpoint and self.cfg.finetune_checkpoint:
             raise ValueError("Select only one of wm_checkpoint and finetune_checkpoint")
+        if bool(self.cfg.student_checkpoint) != bool(self.cfg.teacher_checkpoint):
+            raise ValueError("student_checkpoint and teacher_checkpoint must be specified together")
+        if self.cfg.student_checkpoint:
+            if self.cfg.wm_checkpoint or self.cfg.finetune_checkpoint:
+                raise ValueError("Student initialization cannot be combined with wm_checkpoint or finetune_checkpoint")
+            if self.cfg.no_critic:
+                raise ValueError("Student MBRL initialization requires critic training (no_critic=False)")
         positive = ("buffer_steps", "horizon", "wm_window", "wm_batches", "wm_batch", "pi_batch",
                     "critic_epochs", "critic_minibatches", "lr_decay_iters", "log_every", "save_interval")
         if any(getattr(self.cfg, name) < 1 for name in positive):
@@ -312,8 +320,11 @@ class SuperMimicRunner:
         distributed.assert_same((num_learning_iterations, self.current_learning_iteration),
                                 "learning iteration range")
         self._init_training_models()
-        if not self._checkpoint_loaded and self.finetune_initialization is None and self.world_model_initialization is None:
-            if self.cfg.finetune_checkpoint:
+        if (not self._checkpoint_loaded and self.finetune_initialization is None
+                and self.world_model_initialization is None and self.student_initialization is None):
+            if self.cfg.student_checkpoint:
+                self.load_student(self.cfg.student_checkpoint, self.cfg.teacher_checkpoint)
+            elif self.cfg.finetune_checkpoint:
                 self.load_finetune(self.cfg.finetune_checkpoint)
             elif self.cfg.wm_checkpoint:
                 self.load_world_model(self.cfg.wm_checkpoint)
@@ -381,6 +392,7 @@ class SuperMimicRunner:
                       "task": self.task.checkpoint_metadata(), "infos": infos,
                       "world_model_initialization": self.world_model_initialization,
                       "finetune_initialization": self.finetune_initialization,
+                      "student_initialization": self.student_initialization,
                       "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
                       "distributed": {"world_size": distributed.world_size(),
                                       "batch_sizes": "per_rank", "sim_steps": "global"}}
@@ -445,6 +457,7 @@ class SuperMimicRunner:
             self.sim_steps = checkpoint.get("sim_steps", 0)
         self.world_model_initialization = checkpoint.get("world_model_initialization")
         self.finetune_initialization = checkpoint.get("finetune_initialization")
+        self.student_initialization = checkpoint.get("student_initialization")
         self._checkpoint_loaded = True
         return checkpoint.get("infos")
 
@@ -456,10 +469,74 @@ class SuperMimicRunner:
         """Reuse Actor/WM under new rewards; keep Critic, optimizers and clock fresh."""
         return self._load_initialization(path, with_actor=True)
 
+    def load_student(self, student_path, teacher_path):
+        """Continue a distilled Actor with teacher WM/Critic and fresh optimizers."""
+        validator = getattr(self.task, "validate_student_initialization", None)
+        if not callable(validator):
+            raise ValueError("This task does not support student MBRL initialization")
+        if self.cfg.no_critic:
+            raise ValueError("Student MBRL initialization requires critic training (no_critic=False)")
+        self._init_training_models()
+        if (self._checkpoint_loaded or self.world_model_initialization is not None
+                or self.finetune_initialization is not None or self.student_initialization is not None
+                or self.current_learning_iteration or self.sim_steps or self.wall_time
+                or any(opt.state for opt in (self.opt_wm, self.opt_pi, self.opt_v))):
+            raise ValueError("Student initialization requires a fresh, untrained runner")
+        with distributed.local_phase(self.device, "student MBRL initialization"):
+            checkpoints, provenance = {}, {}
+            for name, path in (("student", student_path), ("teacher", teacher_path)):
+                source = Path(path).expanduser().resolve()
+                with source.open("rb") as stream:
+                    checksum = hashlib.sha256()
+                    for block in iter(lambda: stream.read(1024 * 1024), b""):
+                        checksum.update(block)
+                    stream.seek(0)
+                    checkpoint = torch.load(stream, map_location="cpu", weights_only=False)
+                if not isinstance(checkpoint, dict):
+                    raise ValueError(f"Invalid {name} checkpoint")
+                checkpoints[name] = checkpoint
+                provenance[name] = dict(path=str(source), sha256=checksum.hexdigest(),
+                                        iteration=checkpoint.get("iteration"))
+                policy = checkpoint.get("policy_config", {})
+                if any(policy.get(key) != self.policy_config[key] for key in ("history_length", "goal_frames")):
+                    raise ValueError(f"{name.capitalize()} history/goal configuration mismatch")
+            student, teacher = checkpoints["student"], checkpoints["teacher"]
+            validator(student, teacher)
+            if teacher.get("train_cfg", {}).get("gamma") != self.cfg.gamma:
+                raise ValueError("Teacher critic discount gamma does not match the student MBRL configuration")
+            modules = (("student", self.pi, student.get("student")),
+                       ("world-model", self.wm, teacher.get("wm")),
+                       ("critic", self.critic, teacher.get("critic")))
+            # Check all three networks before copying any source tensors.
+            for label, module, weights in modules:
+                expected = module.state_dict()
+                if not isinstance(weights, dict) or weights.keys() != expected.keys():
+                    raise ValueError(f"{label} checkpoint tensor keys do not match")
+                for name, value in weights.items():
+                    if (not isinstance(value, torch.Tensor) or value.shape != expected[name].shape
+                            or value.dtype != expected[name].dtype or not bool(torch.isfinite(value).all())):
+                        raise ValueError(f"Invalid {label} tensor: {name} (shape, dtype or nonfinite values)")
+                    if name.endswith((".var", ".count")) and bool((value < 0).any()):
+                        raise ValueError(f"Invalid {label} normalizer: {name}")
+            provenance["student"]["metrics"] = student.get("metrics")
+            provenance["continued_training"] = ["actor", "world_model", "critic"]
+        distributed.assert_same(provenance, "student and teacher initialization checkpoints")
+        for _, module, weights in modules:
+            module.load_state_dict(weights, strict=True)
+            module.requires_grad_(True)
+        self.student_initialization = provenance
+        if distributed.primary():
+            print(f"[student MBRL initialization] Actor: {provenance['student']['path']} | "
+                  f"WM/Critic: {provenance['teacher']['path']} "
+                  f"(iteration={provenance['teacher']['iteration']}); "
+                  "all three networks continue training; fresh optimizers and clock", flush=True)
+        return provenance
+
     def _load_initialization(self, path, *, with_actor):
         self._init_training_models()
         if (self._checkpoint_loaded or self.world_model_initialization is not None
                 or self.finetune_initialization is not None
+                or self.student_initialization is not None
                 or self.current_learning_iteration or any(opt.state for opt in (self.opt_wm, self.opt_pi, self.opt_v))):
             raise ValueError("Checkpoint initialization requires a fresh, untrained runner")
         description = "fine-tune initialization" if with_actor else "world-model initialization"

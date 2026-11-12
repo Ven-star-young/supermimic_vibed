@@ -180,6 +180,7 @@ def _restore_open_door_config(cfg, checkpoint):
     if set(physics) != physical_fields:
         raise ValueError("OpenDoor checkpoint door_physics fields do not match the task schema")
     updates = dict(physics)
+    updates["actor_observation"] = metadata.get("actor_observation_mode", "state")
     tactile = metadata.get("tactile")
     updates["use_tactile"] = tactile is not None
     if tactile is not None:

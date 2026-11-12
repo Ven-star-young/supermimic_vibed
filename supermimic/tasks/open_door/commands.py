@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 import math
+from typing import Literal
 
 import torch
 
@@ -15,6 +16,7 @@ from .events import DoorRandomizationCfg
 class DoorCommandCfg(MotionCommandCfg):
     motion_files: tuple[str, ...] = ()
     door_xml: str | None = None
+    actor_observation: Literal["state", "proprio"] = "state"
     use_tactile: bool = False
     tactile_layout: str = "original_outer"
     tactile_contact_distance_m: float = 0.004
@@ -30,6 +32,8 @@ class DoorCommandCfg(MotionCommandCfg):
     door_randomization_cfg: DoorRandomizationCfg = field(default_factory=DoorRandomizationCfg)
 
     def __post_init__(self):
+        if self.actor_observation not in ("state", "proprio"):
+            raise ValueError("actor_observation must be state or proprio")
         if not isinstance(self.use_tactile, bool):
             raise ValueError("use_tactile must be boolean")
         if self.use_tactile and self.history_length != 10:

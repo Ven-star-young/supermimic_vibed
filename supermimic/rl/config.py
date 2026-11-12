@@ -60,6 +60,10 @@ class SuperMimicRunnerCfg(RslRlBaseRunnerCfg):
     """Initialize only WM weights/statistics on a fresh run; full resume takes precedence."""
     finetune_checkpoint: str | None = None
     """Initialize Actor and WM for changed rewards, with a fresh Critic and optimizers."""
+    student_checkpoint: str | None = None
+    """Initialize Actor from a distilled student; requires teacher_checkpoint."""
+    teacher_checkpoint: str | None = None
+    """Initialize WM/Critic for student MBRL; all three networks continue training."""
     lr_decay_iters: int = 250_000
     """Cosine learning-rate decay horizon, ending at 3% of the initial rate."""
     log_every: int = 50

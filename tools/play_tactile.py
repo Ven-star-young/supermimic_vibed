@@ -489,7 +489,7 @@ def main(argv=None):
     server = None
     before = play_policy.policy_digest(policy)
     student = isinstance(policy, OpenDoorStudentPolicy)
-    diagnostic_only = student and not policy.use_tactile
+    diagnostic_only = (student or getattr(policy, "proprio_only", False)) and not policy.use_tactile
     try:
         server = viser.ViserServer(host="127.0.0.1", port=args.port,
             label="G1 Proprio Policy / Tactile Diagnostics" if diagnostic_only else "G1 Policy + Tactile")

@@ -11,35 +11,42 @@ from .dynamics import DoorDynamics
 
 
 class Policy(TrackingPolicy):
-    """102-D state history, optionally followed by tactile counts and validity.
+    """State history, optionally followed by tactile counts and validity.
 
-    Tactile frames contain 102 state features, 112 raw 0–255 channel counts,
-    and 112 validity values. Only the state prefix uses running normalization.
+    Experts observe 102 state features; proprio-only students observe the first
+    93. Tactile frames append 112 raw 0–255 counts and 112 validity values.
+    Only the state prefix uses running normalization.
     """
 
-    def __init__(self, history_length=10, goal_frames=10, *, use_tactile: bool = False):
+    def __init__(self, history_length=10, goal_frames=10, *, use_tactile: bool = False,
+                 proprio_only: bool = False):
         if not isinstance(use_tactile, bool):
             raise ValueError("use_tactile must be boolean")
-        super().__init__(obs_dim=102, goal_dim=75 * goal_frames, hist=history_length)
+        if not isinstance(proprio_only, bool):
+            raise ValueError("proprio_only must be boolean")
+        state_observation_dim = 93 if proprio_only else 102
+        super().__init__(obs_dim=state_observation_dim, goal_dim=75 * goal_frames, hist=history_length)
+        self.proprio_only = proprio_only
+        self.state_observation_dim = state_observation_dim
         self.use_tactile = use_tactile
         self.tactile_encoder = TactileEncoder(history_length) if use_tactile else None
         if use_tactile:
             self.dec[0] = nn.Linear(self.dec[0].in_features + TACTILE_LATENT_DIM, self.dec[0].out_features)
 
     def _tactile_history(self, history: torch.Tensor) -> torch.Tensor:
-        frame_dim = 102 + 2 * TACTILE_CHANNELS
+        frame_dim = self.state_observation_dim + 2 * TACTILE_CHANNELS
         if history.ndim != 3 or history.shape[1:] != (self.hist, frame_dim):
-            raise ValueError(f"Expected tactile expert history [B,{self.hist},{frame_dim}], got {tuple(history.shape)}")
+            raise ValueError(f"Expected tactile history [B,{self.hist},{frame_dim}], got {tuple(history.shape)}")
         return history
 
     @torch.no_grad()
     def update_normalizers(self, history, goal):
         if self.use_tactile:
-            frame_dim = 102 + 2 * TACTILE_CHANNELS
+            frame_dim = self.state_observation_dim + 2 * TACTILE_CHANNELS
             if (history.ndim != 3 or history.shape[-1] != frame_dim
                     or history.shape[0] != goal.shape[0]):
-                raise ValueError(f"Expected tactile expert normalization frames [B,T,{frame_dim}], got {tuple(history.shape)}")
-            history = history[..., :102]
+                raise ValueError(f"Expected tactile normalization frames [B,T,{frame_dim}], got {tuple(history.shape)}")
+            history = history[..., :self.state_observation_dim]
         super().update_normalizers(history, goal)
 
     def forward(self, obs_hist: torch.Tensor, goal: torch.Tensor, geometry_ids=None) -> torch.Tensor:
@@ -49,11 +56,11 @@ class Policy(TrackingPolicy):
         if (goal.ndim != 2 or goal.shape[-1] != self.goal_norm.mean.numel()
                 or goal.shape[0] != history.shape[0]):
             raise ValueError(f"Expected goal [B,{self.goal_norm.mean.numel()}], got {tuple(goal.shape)}")
-        counts = history[..., 102:102 + TACTILE_CHANNELS]
-        valid = history[..., 102 + TACTILE_CHANNELS:].bool()
+        counts = history[..., self.state_observation_dim:self.state_observation_dim + TACTILE_CHANNELS]
+        valid = history[..., self.state_observation_dim + TACTILE_CHANNELS:].bool()
         tactile = self.tactile_encoder(counts, valid)
         z = torch.tanh(run_mlp(self.enc, self.goal_norm(goal)))
-        state = self.obs_norm(history[..., :102]).flatten(-2)
+        state = self.obs_norm(history[..., :self.state_observation_dim]).flatten(-2)
         return run_mlp(self.dec, torch.cat((z, state, tactile), dim=-1))
 
 
