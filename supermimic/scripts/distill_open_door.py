@@ -33,6 +33,9 @@ def make_env_cfg(config, checkpoint):
     policy_config = checkpoint.get("policy_config", {})
     if (policy_config.get("history_length"), policy_config.get("goal_frames")) != (10, 10):
         raise ValueError("The expert must use 10 history frames and 10 reference frames")
+    expected_observation = checkpoint["task"]["dimensions"]["observation"]
+    if config.expert_observation_dim != expected_observation:
+        raise ValueError(f"Set expert_observation_dim={expected_observation} for this teacher checkpoint")
     cfg = load_env_cfg(TASKS[task_name], play=False)
     _restore_open_door_config(cfg, checkpoint)
     cfg.scene.num_envs, cfg.auto_reset, cfg.seed = config.num_envs, False, config.seed
@@ -119,7 +122,7 @@ def train(config):
     env = ManagerBasedRlEnv(make_env_cfg(config, checkpoint), device=config.device)
     try:
         env.command_manager.get_term("motion").task.validate_checkpoint(checkpoint)
-        expert = FrozenOpenDoorExpert(Policy().to(config.device))
+        expert = FrozenOpenDoorExpert(Policy(use_tactile="tactile" in checkpoint["task"]).to(config.device))
         expert.load_checkpoint(checkpoint)
         student = OpenDoorStudentPolicy(use_tactile=config.use_tactile).to(config.device)
         if config.initialize_goal_from_teacher:

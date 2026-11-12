@@ -20,6 +20,11 @@
 `motion_dir` 为匹配的侧面模型及 NPZ；入口按 checkpoint 的任务类型选择环境。
 输出目录必须为空，避免覆盖已有实验。
 
+也可使用由 `configs/open_door_tactile.json` 训练的背部触觉expert：将
+`expert_checkpoint` 指向该模型，并设 `expert_observation_dim=326`。入口恢复教师的触觉
+布局和counts参数；教师历史为原102维状态＋112维counts＋112维validity。
+学生仍只提取前93维本体，`use_tactile` 独立决定学生是否使用触觉，教师保持冻结。
+
 训练顺序是教师执行采集 → BC 初始化 → 逐轮混合执行／DAgger 更新。
 `bc_rollout_steps`、`bc_train_epochs`、`bc_batches` 控制 BC；
 `rounds`、`rollout_steps`、`train_epochs`、`updates_per_round` 控制 DAgger。
@@ -53,6 +58,7 @@ Slurm 脚本的首个参数可选；省略时继续使用原触觉配置。每�
 ```text
 教师：policy_history [B,10,102] = 本体93 + 当前门状态9
       goal           [B,750]
+      触觉expert可选 [B,10,326] = 上述102 + counts112 + validity112
 
 学生：proprio_history [B,10,93]
       tactile_history [B,10,112] uint8，原始0–255 counts
@@ -83,7 +89,8 @@ Actor保留原本体／goal归一化、goal编码器及decoder隐层，输入为
 ```
 
 `STUDENT_INPUT_DIM=930` 仍表示本体历史长度，完整decoder输入是1026。
-触觉latent只拼接一次；教师网络、世界模型和Critic不增加触觉输入。
+触觉latent只拼接一次；默认教师保持原网络，可选触觉expert需先单独在RL阶段训练。
+蒸馏不更新教师，也不训练世界模型或Critic。
 新增学生从头训练，动作仍由现有action manager转换：
 
 ```text

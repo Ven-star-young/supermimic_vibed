@@ -180,6 +180,13 @@ def _restore_open_door_config(cfg, checkpoint):
     if set(physics) != physical_fields:
         raise ValueError("OpenDoor checkpoint door_physics fields do not match the task schema")
     updates = dict(physics)
+    tactile = metadata.get("tactile")
+    updates["use_tactile"] = tactile is not None
+    if tactile is not None:
+        for key, field in (("layout", "tactile_layout"), ("contact_distance_m", "tactile_contact_distance_m"),
+                           ("full_scale_depth_m", "tactile_counts_full_scale_depth_m"),
+                           ("exponent", "tactile_counts_exponent")):
+            updates[field] = tactile[key]
     for saved, field in (("door_randomization", "door_randomization_cfg"),
                          ("door_reward", "door_reward_cfg"), ("robot_reward", "reward_cfg"),
                          ("observation", "observation_cfg"), ("termination", "termination_cfg")):
@@ -193,6 +200,13 @@ def _restore_open_door_config(cfg, checkpoint):
     restored = replace(command, **updates)  # Validate physical configuration before mutating it.
     for field in updates:
         setattr(command, field, getattr(restored, field))
+    if tactile is not None:
+        for sensor in cfg.scene.sensors:
+            if sensor.name == "tactile":
+                sensor.layout = command.tactile_layout
+                sensor.contact_distance_m = command.tactile_contact_distance_m
+                sensor.counts_full_scale_depth_m = command.tactile_counts_full_scale_depth_m
+                sensor.counts_exponent = command.tactile_counts_exponent
 
 
 def score_checkpoint(path: Path, args):

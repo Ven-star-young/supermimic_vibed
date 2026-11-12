@@ -33,6 +33,13 @@ class DoorEnvCfg(ManagerBasedRlEnvCfg):
                              spec_fn=configure_scene)
         self.sim = replace(self.sim, nconmax=max(512, self.sim.nconmax or 0),
                            njmax=max(2000, self.sim.njmax or 0))
+        command = self.commands["motion"]
+        for sensor in self.scene.sensors:
+            if sensor.name == "tactile":
+                sensor.layout = command.tactile_layout
+                sensor.contact_distance_m = command.tactile_contact_distance_m
+                sensor.counts_full_scale_depth_m = command.tactile_counts_full_scale_depth_m
+                sensor.counts_exponent = command.tactile_counts_exponent
         self.events = {**self.events, "door_physics": EventTermCfg(func=randomize_door_physics, mode="reset")}
 
 

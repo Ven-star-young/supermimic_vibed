@@ -83,6 +83,7 @@ def load_deployment(args):
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     kind = checkpoint.get("kind")
     student = kind in ("open_door_tactile_student", "open_door_proprio_student")
+    expert_tactile = None if student else checkpoint.get("task", {}).get("tactile")
     if student:
         if args.task == "sitting":
             raise ValueError("OpenDoor students require --task open_door or open_door_side")
@@ -111,7 +112,10 @@ def load_deployment(args):
             raise ValueError("Student tactile config and saved sensor metadata disagree")
         task_checkpoint = {"task": checkpoint["expert_task"]}
     else:
-        response_cfg = G1TactileSensorCfg(name="tactile")
+        response_cfg = (G1TactileSensorCfg(name="tactile", layout=expert_tactile["layout"],
+            contact_distance_m=expert_tactile["contact_distance_m"],
+            counts_full_scale_depth_m=expert_tactile["full_scale_depth_m"],
+            counts_exponent=expert_tactile["exponent"]) if expert_tactile else G1TactileSensorCfg(name="tactile"))
         task_checkpoint = checkpoint
     overrides = {}
     if args.layout is not None:
@@ -122,6 +126,8 @@ def load_deployment(args):
         overrides["counts_exponent"] = args.counts_exponent
     if student and use_tactile and any(getattr(response_cfg, key) != value for key, value in overrides.items()):
         print("Warning: explicit tactile overrides change the student's training input mapping.", flush=True)
+    if expert_tactile and any(getattr(response_cfg, key) != value for key, value in overrides.items()):
+        raise ValueError("Tactile expert playback must use its saved layout and counts mapping")
     response_cfg = replace(response_cfg, **overrides)
     manifest = None
     if args.task == "sitting":
@@ -182,7 +188,8 @@ def load_deployment(args):
 
             @torch.no_grad()
             def inference(observations):
-                proprio = split_open_door_history(observations["policy_history"])
+                proprio = split_open_door_history(observations["policy_history"],
+                    expert_observation_dim=saved.get("expert_observation_dim", 102))
                 if history is None:
                     return policy(proprio, observations["goal"])
                 sensor.update(0.)
@@ -487,7 +494,7 @@ def main(argv=None):
         server = viser.ViserServer(host="127.0.0.1", port=args.port,
             label="G1 Proprio Policy / Tactile Diagnostics" if diagnostic_only else "G1 Policy + Tactile")
         viewer = TactileViewer(env, inference, server, checkpoint, reference, paused=args.paused,
-                              mapping_locked=student and policy.use_tactile,
+                              mapping_locked=bool(getattr(policy, "use_tactile", False)),
                               tactile_diagnostic_only=diagnostic_only)
         print(f"[{args.task}] {checkpoint}\nReference: {reference}\nOpen http://127.0.0.1:{server.get_port()}", flush=True)
         viewer.run()

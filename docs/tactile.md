@@ -2,7 +2,8 @@
 
 Sitting、OpenDoor 和 OpenDoorSide 默认注册 `tactile` 传感器，查询 464 个机器人触点到
 当前椅子或门的表面距离，再按原成员关系汇总为 112 通道。混合椅型场景按环境查询各自物体。
-触觉按需读取，现有 Actor、WM、Critic 输入和 checkpoint 维度不变。
+触觉按需读取；默认任务的 Actor、WM、Critic 输入和 checkpoint 维度不变。
+新增背部开门 expert 实验可显式开启 Actor 触觉，见下文。
 布局来源、区域覆盖、原文件哈希及腕部模型差异见[资产说明](../supermimic/assets/g1/tactile/README.md)。
 
 ## 部署与显示
@@ -186,7 +187,25 @@ cfg.observations["tactile"] = ObservationGroupCfg(
 
 SuperMimic Runner 不会自动将新组拼入 Actor 或 WM。
 已有的 [OpenDoor BC/DAgger 蒸馏](../supermimic/distillation/open_door/README.md) 单独读取
-10帧 counts 和有效性 mask，编码为64维特征接入学生 Actor；教师及世界模型保持原输入。
+10帧 counts 和有效性 mask，编码为64维特征接入学生 Actor；默认使用原无触觉教师。
+
+## 背部开门 expert 的触觉输入
+
+[`configs/open_door_tactile.json`](../configs/open_door_tactile.json) 显式开启
+`task.use_tactile=true`，默认 `original_outer` 布局、4 mm接触阈值、10 mm满量程深度和指数1。
+Actor每帧输入为原102维状态＋112维counts＋112维validity，共326维。
+10帧触觉经与学生共用的六区空间／时间编码器得到64维latent，与1020维状态历史、
+32维goal latent拼为1116维decoder输入。世界模型和Critic维度保持原样。
+
+`DoorTactile` 在真实状态和想象状态上都执行Torch FK与有限门盒有符号距离查询，
+复用原触点资产和通道成员，按通道最大响应聚合后舍入。输出是浮点张量，但前向值为
+0–255整数；反向采用连续响应的直通估计，以保留想象动作到后续触觉的梯度。
+有效性掩码随各帧一起进入历史。对应的Warp传感器仍提供可视化和同状态通道对照，
+校验的是counts及有效性，不是MuJoCo接触力。该后端仅用于背部开门的门板box。
+
+训练使用 `supermimic.scripts.train_open_door --config configs/open_door_tactile.json`，
+回放使用现有 `tools/play_tactile.py --task open_door --checkpoint ...`。
+实验配置与训练命令见[背部开门工作流](open-door-workflow.md#带触觉的背部-expert)。
 
 ## 更新与缓存
 

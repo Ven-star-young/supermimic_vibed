@@ -51,9 +51,9 @@ class OpenDoorDaggerConfig:
     beta_decay_rounds: int = 10
 
     def __post_init__(self):
-        if (self.history_length, self.proprio_dim, self.expert_observation_dim,
-                self.goal_dim, self.action_dim) != (10, 93, 102, 750, 29):
-            raise ValueError("OpenDoor distillation requires history10/proprio93/expert102/goal750/action29")
+        if ((self.history_length, self.proprio_dim, self.goal_dim, self.action_dim) != (10, 93, 750, 29)
+                or self.expert_observation_dim not in (102, 326)):
+            raise ValueError("OpenDoor distillation requires history10/proprio93/expert102-or-326/goal750/action29")
         if self.num_envs < 1:
             raise ValueError("num_envs must be positive")
         if not isinstance(self.use_tactile, bool):

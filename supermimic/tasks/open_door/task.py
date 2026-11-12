@@ -35,7 +35,8 @@ class OpenDoorTask(TrackingTask):
         return files
 
     def make_policy(self, history_length, goal_frames, geometry_bank=None):
-        return Policy(history_length=history_length, goal_frames=goal_frames)
+        return Policy(history_length=history_length, goal_frames=goal_frames,
+                      use_tactile=self.mdp.tactile is not None)
 
     def make_world_model(self, geometry_bank=None, geometry_encoder=None):
         return WorldModel(dynamics=self.dynamics)
@@ -44,7 +45,7 @@ class OpenDoorTask(TrackingTask):
         return Critic(goal_frames)
 
     def checkpoint_metadata(self):
-        return {
+        metadata = {
             "name": self.name, "schema_version": 2,
             "dynamics_schema": "open-door-g1-hinge-v1",
             "dimensions": asdict(self.dimensions),
@@ -66,6 +67,11 @@ class OpenDoorTask(TrackingTask):
             "observation": asdict(self.mdp.observation_cfg),
             "termination": asdict(self.mdp.termination_cfg),
         }
+        if self.mdp.tactile is not None:
+            metadata["tactile"] = self.mdp.tactile.metadata
+            metadata["actor_observation"] += ",tactile_counts112,tactile_valid112"
+            metadata["model"]["tactile_latent"] = 64
+        return metadata
 
     def validate_checkpoint(self, checkpoint):
         from .events import DoorRandomizationCfg
@@ -137,12 +143,23 @@ def build_task(motion_dir=None, *, device="cuda:0", play=False, motion=None, kin
     metadata = motion.door_metadata
     dynamics = DoorDynamics(float(metadata["base_yaw"]), float(metadata["joint_axis"][2]))
     geometry = task_cls.geometry_cls(kin, metadata, device)
+    tactile = None
+    if command.use_tactile:
+        if task_cls.task_name != "g1_open_door":
+            raise ValueError("The tactile expert experiment currently supports back-opening only")
+        from ...tactile import G1TactileSensorCfg
+        from .tactile import DoorTactile
+        tactile = DoorTactile(geometry, G1TactileSensorCfg(
+            name="tactile", target_entity="door", layout=command.tactile_layout,
+            contact_distance_m=command.tactile_contact_distance_m,
+            counts_full_scale_depth_m=command.tactile_counts_full_scale_depth_m,
+            counts_exponent=command.tactile_counts_exponent))
     mdp = task_cls.mdp_cls(
         kin, motion, torch.tensor(defaults, device=device), cfg=command.reward_cfg,
         observation_cfg=command.observation_cfg, termination_cfg=command.termination_cfg,
         control_dt=cfg.sim.mujoco.timestep * cfg.decimation,
         door_reward_cfg=command.door_reward_cfg,
-        dynamics=dynamics, geometry=geometry,
+        dynamics=dynamics, geometry=geometry, tactile=tactile,
     )
     return task_cls(task_cls.task_name, motion, mdp, dynamics, cfg,
                     modeled_entities=("robot", "door"))

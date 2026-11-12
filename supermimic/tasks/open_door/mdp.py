@@ -40,20 +40,22 @@ def smoothstep(value):
 
 
 class DoorMDP(MDP):
-    def __init__(self, *args, dynamics, geometry, door_reward_cfg=None, **kwargs):
+    def __init__(self, *args, dynamics, geometry, door_reward_cfg=None, tactile=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.dynamics, self.geometry = dynamics, geometry
+        self.tactile = tactile
         self.door_reward_cfg = door_reward_cfg or DoorRewardCfg()
         limit = self.door_reward_cfg.penetration_limit
         if limit is not None and limit >= min(self.motion.door_metadata["panel_half_size"]):
             raise ValueError("penetration_limit must be smaller than the door's minimum half-size")
-        self.obs_noise = torch.cat((self.obs_noise, self.obs_noise.new_zeros(9)))
-        self.obs_scale = torch.cat((self.obs_scale, self.obs_scale.new_ones(9)))
+        extra = 9 + (224 if tactile is not None else 0)
+        self.obs_noise = torch.cat((self.obs_noise, self.obs_noise.new_zeros(extra)))
+        self.obs_scale = torch.cat((self.obs_scale, self.obs_scale.new_ones(extra)))
         self.hinge_range = tuple(float(v) for v in self.motion.door_metadata["joint_range"])
 
     @property
     def observation_dim(self):
-        return super().observation_dim + 9
+        return super().observation_dim + 9 + (224 if self.tactile is not None else 0)
 
     @property
     def critic_feature_dim(self):
@@ -65,8 +67,11 @@ class DoorMDP(MDP):
         return super().max_step_reward + (c.angle_weight + c.velocity_weight + c.back_weight) * self.control_dt
 
     def obs(self, S, a_prev, xi, f):
-        return torch.cat((super().obs(S[:6], a_prev, xi[..., :33], f),
-                          self.dynamics.door_features(S, xi)), -1)
+        fields = [super().obs(S[:6], a_prev, xi[..., :33], f), self.dynamics.door_features(S, xi)]
+        if self.tactile is not None:
+            counts, valid = self.tactile(S)
+            fields.extend((counts, valid.to(counts.dtype)))
+        return torch.cat(fields, -1)
 
     def reward(self, S, f, a, a_prev, terms=False):
         # Robot reward already includes dt, action-rate and joint-limit costs.

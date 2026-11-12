@@ -15,6 +15,11 @@ from .events import DoorRandomizationCfg
 class DoorCommandCfg(MotionCommandCfg):
     motion_files: tuple[str, ...] = ()
     door_xml: str | None = None
+    use_tactile: bool = False
+    tactile_layout: str = "original_outer"
+    tactile_contact_distance_m: float = 0.004
+    tactile_counts_full_scale_depth_m: float = 0.010
+    tactile_counts_exponent: float = 1.0
     door_mass: float = 8.0
     door_damping: float = 5.0
     door_friction: float = 0.5
@@ -25,6 +30,10 @@ class DoorCommandCfg(MotionCommandCfg):
     door_randomization_cfg: DoorRandomizationCfg = field(default_factory=DoorRandomizationCfg)
 
     def __post_init__(self):
+        if not isinstance(self.use_tactile, bool):
+            raise ValueError("use_tactile must be boolean")
+        if self.use_tactile and self.history_length != 10:
+            raise ValueError("Tactile experts require history_length=10")
         values = (self.door_mass, self.door_damping, self.door_friction,
                   self.robot_door_friction, self.door_stiffness)
         if any(not math.isfinite(v) or v < 0 for v in values) or self.door_mass == 0:

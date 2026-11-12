@@ -70,6 +70,59 @@ Critic当前205 = robot184 + door9 + θ/ω参考误差2 + door尺寸/物性10，
 Actor没有特权物性；没有PointNet、learned geometry、额外task memory或固定最终角度命令。
 参考和奖励不输入WM。不同任务不共享checkpoint参数。
 
+### 带触觉的背部 expert
+
+[`configs/open_door_tactile.json`](../configs/open_door_tactile.json) 是独立的背部开门实验。
+它沿用 `open_door.json` 的训练和任务配置，将环境数设为单卡2048，使用独立的
+`training.run_name`，并增加
+`task.use_tactile`、`tactile_layout`、`tactile_contact_distance_m`、
+`tactile_counts_full_scale_depth_m`、`tactile_counts_exponent` 五个触觉选项。
+原实验仍默认关闭 Actor 触觉，已有模型接口保持兼容。
+
+新 expert 保留本体93维与当前门状态9维，每帧追加112维 counts 和112维 validity，
+共326维。10帧触觉复用学生的六区空间／时间编码器，输出64维 latent：
+
+```text
+原状态历史 10×102 + goal latent32 + tactile latent64 = 1116 → Actor → 29
+```
+
+只有原102维状态使用 running normalization；counts 按0–255缩放并配合有效性掩码。
+Goal encoder 仍为750→32，触觉编码器随 Actor 的想象奖励梯度共同训练。
+WM 的 state73/context46及预测目标不变，Critic不增加触觉输入。
+
+真实采集和世界模型想象都从各自状态通过同一个 Torch FK／门盒有符号距离实现生成触觉，
+采用相同464触点、112通道成员关系及counts参数；前向舍入到整数读数，反向通过连续响应
+使用直通估计（STE）。同状态下以现有 Warp 传感器的112通道 counts／validity作对照校验。
+这让想象动作能通过后续触觉观测获得梯度，不要求世界模型额外预测触觉；STE是近似梯度，
+counts仍未标定为真实力。实现说明见[触觉文档](tactile.md)。
+
+沿用现有训练和回放入口：
+
+```bash
+.venv/bin/python -m supermimic.scripts.train_open_door --config configs/open_door_tactile.json --check
+.venv/bin/python -m supermimic.scripts.train_open_door --config configs/open_door_tactile.json
+.venv/bin/python tools/play_tactile.py --task open_door --checkpoint /absolute/path/model_10000.pt
+```
+
+CUHK上的训练须在Slurm分配内执行，保留其分配的GPU可见性。新配置默认从头训练，
+不将原无触觉Actor作为续训模型。服务器上的动作路径可通过现有CLI覆盖：
+
+```bash
+cd /home/wangfeng/supermimic_vibed
+mkdir -p logs/slurm
+sbatch --account=interns --partition=gpu --nodes=1 --ntasks=1 --gres=gpu:a100:1 \
+  --cpus-per-task=8 --mem=32G --time=24:00:00 \
+  --job-name=door-tactile-expert --output=logs/slurm/%x-%j.out \
+  --wrap='OMP_NUM_THREADS=8 PYTHONUNBUFFERED=1 .venv/bin/python -m supermimic.scripts.train_open_door --config configs/open_door_tactile.json --env.commands.motion.motion-dir /data/wangfeng/supermimic_open_door_tracking/data/motions/open_door_prepared/video1_g1_door_video45_centered_asset.npz'
+```
+
+短验收覆盖了通道与Warp读数对齐、Actor/WM/Critic更新、保存和恢复、回放以及新教师蒸馏。
+CUHK作业285在单卡2048环境、WM/Actor batch各512、horizon32下完成两次更新，进程显存峰值
+31244 MiB（该次关闭编译）；默认编译与bf16组合已在本地小规模RL更新中通过。
+这些检查验证训练链路，尚不代表收敛或正式编译训练的显存峰值。
+训练完成后可在BC/DAgger配置中指定新 `expert_checkpoint`，同时设
+`expert_observation_dim=326`；学生本体仍只提取前93维，学生触觉开关独立控制。
+
 ## 门物性随机化
 
 训练时每个环境在每次reset独立、均匀采样以下参数；一个episode内保持不变。
