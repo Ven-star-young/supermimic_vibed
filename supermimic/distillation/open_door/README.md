@@ -205,7 +205,12 @@ Actor每帧仍只有本体93维及可选counts112/validity112，即93或317维�
 两份配置使用单卡2048环境、WM/Actor batch各512、32步想象、64步Replay填充、
 `wm_only_iters=0`，保留MLP bf16及编译。产物是带 `pi`、`wm`、`critic` 和优化器状态的
 完整RL checkpoint；之后正常resume不依赖原始学生或教师文件。
-当前学习率对照仅将Actor设为 `training.pi_lr=2e-5`，WM/Critic保持 `training.lr=2e-4`；
-未加入KL/BC约束，也未冻结归一化统计。建议先按工作流命令运行500轮，确认早期自主评测再决定延长。
+当前MBRL配置沿用Actor `training.pi_lr=2e-5`、WM/Critic `training.lr=2e-4`，
+增加 `pi_kl_coef=0.01`、`pi_kl_std=0.1` 的固定DAgger学生参考约束。参考包含原始归一化统计，
+初始化后完全冻结；真实Replay的同一观测历史/goal分别输入当前与参考Actor，
+以等方差高斯代理KL（动作维求和、batch求均值）作为额外Actor损失。
+当前Actor统计仍按原逻辑更新，参考统计不更新。完整RL checkpoint内保存参考，恢复时不会改用当前Actor作参考。
+设 `pi_kl_coef=0` 可关闭；旧无参考的MBRL checkpoint不能直接开启KL恢复。
+建议先按工作流命令运行500轮，确认早期自主评测再决定延长。
 `tools/play_tactile.py` 同时支持蒸馏学生与新的RL checkpoint。
 CUHK路径覆盖及Slurm命令见[背部开门工作流](../../../docs/open-door-workflow.md#蒸馏学生继续-supermimic-mbrl)。

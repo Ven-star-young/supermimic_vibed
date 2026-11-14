@@ -8,6 +8,7 @@ and critic through BPTT. Inference allocates only the policy.
 from __future__ import annotations
 
 import csv
+from copy import deepcopy
 from dataclasses import asdict
 import hashlib
 import math
@@ -45,6 +46,7 @@ class SuperMimicRunner:
         self.geometry_bank = getattr(command, "geometry_bank", None)
         self.pi = self.task.make_policy(self.history_length, self.goal_frames,
                                         self.geometry_bank).to(self.device)
+        self.pi_reference = None
         self.wm = self.critic = None
         self.buffer = self.replay_env = None
         self.log_dir = Path(log_dir) if log_dir is not None else None
@@ -74,6 +76,10 @@ class SuperMimicRunner:
                 continue
             if not math.isfinite(value) or value <= 0:
                 raise ValueError(f"{name} must be finite and positive")
+        if not math.isfinite(self.cfg.pi_kl_coef) or self.cfg.pi_kl_coef < 0:
+            raise ValueError("pi_kl_coef must be finite and nonnegative")
+        if not math.isfinite(self.cfg.pi_kl_std) or self.cfg.pi_kl_std <= 0:
+            raise ValueError("pi_kl_std must be finite and positive")
         positive = ("buffer_steps", "horizon", "wm_window", "wm_batches", "wm_batch", "pi_batch",
                     "critic_epochs", "critic_minibatches", "lr_decay_iters", "log_every", "save_interval")
         if any(getattr(self.cfg, name) < 1 for name in positive):
@@ -209,12 +215,13 @@ class SuperMimicRunner:
         mask = window["mask"][:, -1]
         return loss.detach() / self.cfg.wm_window, (last_error.detach() * mask).sum() / mask.sum().clamp(min=1)
 
-    def _sample_valid_starts(self):
+    def _sample_valid_starts(self, horizon=None):
+        horizon = self.cfg.horizon if horizon is None else horizon
         batch, starts, histories, count = self.cfg.pi_batch, [], [], 0
         for _ in range(128):
             start, history = self.buffer.sample_starts(2 * batch, self.history_length)
             frame = start["f"]
-            valid = start["valid"] & (frame + self.cfg.horizon <= self.motion.clip_end[self.motion.clip_id[frame]])
+            valid = start["valid"] & (frame + horizon <= self.motion.clip_end[self.motion.clip_id[frame]])
             indices = valid.nonzero(as_tuple=False).flatten()[:batch - count]
             starts.append({key: value[indices] for key, value in start.items()})
             histories.append({key: value[indices] for key, value in history.items()})
@@ -224,11 +231,36 @@ class SuperMimicRunner:
                 return concatenate(starts), concatenate(histories)
         raise RuntimeError("Replay has too few starts with a full imagination horizon; collect more data or shorten horizon")
 
+    def _set_policy_reference(self, weights):
+        if not isinstance(weights, dict) or any(not torch.isfinite(value).all() for value in weights.values()):
+            raise ValueError("Invalid frozen DAgger reference weights")
+        reference = deepcopy(self.pi)
+        reference.load_state_dict(weights, strict=True)
+        self.pi_reference = reference.eval().requires_grad_(False)
+
+    def _policy_kl(self, history, goal, context):
+        """Equal-variance Gaussian KL: sum actions, mean real Replay starts.
+
+        Inputs are detached and shared, including observation noise. Each Actor
+        uses its own normalizers; the reference statistics never update.
+        """
+        if self.pi_reference is None:
+            raise RuntimeError("KL requires the frozen initial DAgger Actor")
+        history, goal = history.detach(), goal.detach()
+        geometry_ids = self.task.geometry_ids(context.detach())
+        with torch.no_grad():
+            reference_action = self.pi_reference(history, goal, geometry_ids)
+        action = self.pi(history, goal, geometry_ids)
+        return 0.5 * ((action.float() - reference_action.float()) / self.cfg.pi_kl_std).square().sum(-1).mean()
+
     def policy_update(self):
         cfg, batch, horizon = self.cfg, self.cfg.pi_batch, self.cfg.horizon
         sampling_error = None
         try:
             start, historical = self._sample_valid_starts()
+            if cfg.pi_kl_coef > 0:
+                # KL uses real observations, including the tail excluded from imagination starts.
+                kl_start, kl_historical = self._sample_valid_starts(horizon=0)
         except RuntimeError as exc:
             sampling_error = str(exc)
         distributed.require_all(sampling_error is None,
@@ -240,10 +272,17 @@ class SuperMimicRunner:
         with torch.no_grad():
             history = self.mdp.obs(self.dynamics.unpack(historical["s"]), historical["a_prev"],
                                    historical["xi"], historical["f"])
+            if cfg.pi_kl_coef > 0:
+                kl_history = self.mdp.obs(self.dynamics.unpack(kl_historical["s"]), kl_historical["a_prev"],
+                                          kl_historical["xi"], kl_historical["f"])
         history = self.mdp.add_noise(history)
         self.wm.requires_grad_(False)
         self.critic.requires_grad_(False)
         goal = initial_goal = self.motion.goal(frame, self.goal_frames)
+        kl = state[0].new_zeros(())
+        if cfg.pi_kl_coef > 0:
+            kl = self._policy_kl(self.mdp.add_noise(kl_history),
+                                 self.motion.goal(kl_start["f"], self.goal_frames), kl_start["xi"])
         initial_state = state
         states, actions, previous_actions, frames, goals = [], [], [], [], []
         for _ in range(horizon):
@@ -265,7 +304,9 @@ class SuperMimicRunner:
         if not cfg.no_critic:
             returns = returns + cfg.gamma ** horizon * survival[-1] * self.critic(
                 self._critic_input(state, frame, normalized_context, goal))
-        loss = -returns.mean()
+        mbrl_loss = -returns.mean()
+        kl_loss = cfg.pi_kl_coef * kl
+        loss = mbrl_loss + kl_loss
         self.opt_pi.zero_grad(set_to_none=True)
         loss.backward()
         finite = distributed.average_gradients(self.opt_pi)
@@ -281,7 +322,8 @@ class SuperMimicRunner:
             value_loss = self._critic_update(start, initial_state, initial_goal, states, frames, goals,
                                              normalized_context, rewards.detach(), terminated.detach())
         imagined_reward = (alive_before * rewards).detach().sum(0).mean() / horizon / self.task.max_step_reward
-        return loss.detach(), value_loss.detach(), imagined_reward, gradnorm.detach(), survival[-1].mean().detach()
+        return (loss.detach(), value_loss.detach(), imagined_reward, gradnorm.detach(), survival[-1].mean().detach(),
+                mbrl_loss.detach(), kl.detach(), kl_loss.detach())
 
     def _critic_update(self, start, initial_state, initial_goal, states, frames, goals, context, rewards, terminated):
         horizon, batch = self.cfg.horizon, self.cfg.pi_batch
@@ -316,7 +358,8 @@ class SuperMimicRunner:
     @staticmethod
     def _new_stats():
         names = ("wm_loss", "wm_err8", "pi_loss", "v_loss", "imag_rew", "pi_gradnorm", "imag_survival",
-                 "sim_rew", "sim_invalid", "ep_len", "ep_ret_norm", "terminated", "done")
+                 "pi_mbrl_loss", "pi_kl", "pi_kl_loss", "sim_rew", "sim_invalid", "ep_len", "ep_ret_norm",
+                 "terminated", "done")
         return {name: [] for name in names}
 
     def learn(self, num_learning_iterations, init_at_random_ep_len=False):
@@ -336,6 +379,9 @@ class SuperMimicRunner:
                 self.load_finetune(self.cfg.finetune_checkpoint)
             elif self.cfg.wm_checkpoint:
                 self.load_world_model(self.cfg.wm_checkpoint)
+        if self.cfg.pi_kl_coef > 0 and self.pi_reference is None:
+            raise ValueError("KL requires student_checkpoint/teacher_checkpoint initialization or a checkpoint "
+                             "with its frozen DAgger reference; no current-Actor fallback is allowed")
         self.replay_env = self.make_replay_env()
         self.buffer = ReplayBuffer(self.cfg.buffer_steps, self.replay_env.N, self.device,
                                    state_dim=self.dims.state, action_dim=self.dims.action, context_dim=self.dims.context)
@@ -367,7 +413,8 @@ class SuperMimicRunner:
                 stats["wm_err8"].append(last_error)
                 if iteration >= self.cfg.wm_only_iters:
                     results = self.policy_update()
-                    for name, value in zip(("pi_loss", "v_loss", "imag_rew", "pi_gradnorm", "imag_survival"), results):
+                    for name, value in zip(("pi_loss", "v_loss", "imag_rew", "pi_gradnorm", "imag_survival",
+                                            "pi_mbrl_loss", "pi_kl", "pi_kl_loss"), results):
                         stats[name].append(value)
                 self.current_learning_iteration = iteration + 1
                 self.wall_time = time.monotonic() - self._clock_start
@@ -405,6 +452,11 @@ class SuperMimicRunner:
                       "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
                       "distributed": {"world_size": distributed.world_size(),
                                       "batch_sizes": "per_rank", "sim_steps": "global"}}
+        if self.pi_reference is not None:
+            checkpoint["pi_reference"] = {
+                "kind": "initial_dagger_actor", "policy": self.pi_reference.state_dict(),
+                "source": self.student_initialization["student"],
+            }
         if self.geometry_bank is not None:
             checkpoint["geometry_bank"] = self.geometry_bank.to_dict()
         checkpoint.update(self.checkpoint_extras())
@@ -428,6 +480,16 @@ class SuperMimicRunner:
         # world-model/optimizer tensors that should not occupy the play GPU.
         location = "cpu" if actor_only else (map_location or "cpu")
         checkpoint = torch.load(path, map_location=location, weights_only=False)
+        reference = checkpoint.get("pi_reference")
+        if not actor_only:
+            if self.cfg.pi_kl_coef > 0 and reference is None:
+                raise ValueError("KL-enabled resume requires a saved frozen DAgger reference; "
+                                 "start a new run from student_checkpoint and teacher_checkpoint")
+            if reference is not None:
+                source = (checkpoint.get("student_initialization") or {}).get("student")
+                if (not isinstance(reference, dict) or reference.get("kind") != "initial_dagger_actor"
+                        or source is None or reference.get("source") != source):
+                    raise ValueError("Frozen DAgger reference provenance does not match student initialization")
         self.task.validate_checkpoint(checkpoint)
         self.validate_checkpoint_extras(checkpoint, actor_only=actor_only)
         if self.geometry_bank is not None:
@@ -467,6 +529,10 @@ class SuperMimicRunner:
         self.world_model_initialization = checkpoint.get("world_model_initialization")
         self.finetune_initialization = checkpoint.get("finetune_initialization")
         self.student_initialization = checkpoint.get("student_initialization")
+        if not actor_only:
+            self.pi_reference = None
+            if reference is not None:
+                self._set_policy_reference(reference["policy"])
         self._checkpoint_loaded = True
         return checkpoint.get("infos")
 
@@ -534,6 +600,8 @@ class SuperMimicRunner:
             module.load_state_dict(weights, strict=True)
             module.requires_grad_(True)
         self.student_initialization = provenance
+        if self.cfg.pi_kl_coef > 0:
+            self._set_policy_reference(student["student"])
         if distributed.primary():
             print(f"[student MBRL initialization] Actor: {provenance['student']['path']} | "
                   f"WM/Critic: {provenance['teacher']['path']} "
@@ -662,6 +730,10 @@ class SuperMimicRunner:
             path = self.log_dir / "train_log.csv"
             write_header = not path.exists() or path.stat().st_size == 0
             with path.open("a", newline="") as stream:
+                if not write_header:
+                    with path.open(newline="") as existing:
+                        if next(csv.reader(existing), None) != list(row):
+                            raise ValueError("Training CSV schema differs; use a new log directory when resuming")
                 writer = csv.DictWriter(stream, fieldnames=list(row))
                 if write_header:
                     writer.writeheader()
@@ -678,4 +750,5 @@ class SuperMimicRunner:
               f"imag_r {row['imag_rew']:.3f} surv {row['imag_survival']:.3f} | sim_r {row['sim_rew']:.3f} "
               f"invalid {row['sim_invalid']:.4%} "
               f"ep_len {row['ep_len']:.1f} ep_ret {row['ep_ret_norm']:.3f} | {rate:.2f} it/s | "
-              f"lr(wm/v) {lr:.2e} lr(pi) {metrics['pi_lr']:.2e}", flush=True)
+              f"lr(wm/v) {lr:.2e} lr(pi) {metrics['pi_lr']:.2e} | "
+              f"KL {row['pi_kl']:.4f} penalty {row['pi_kl_loss']:.4f}", flush=True)

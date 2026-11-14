@@ -147,33 +147,60 @@ Replay重新采集；这一步是建立新的RL实验，不是恢复教师的训
 
 两份配置采用单卡2048环境、WM/Actor batch各512、horizon32、Replay256步、
 每次10个WM batch和5轮Critic更新，保留MLP bf16及编译。
-当前学习率对照设 `training.lr=2e-4`（WM/Critic）、`training.pi_lr=2e-5`（Actor，含goal和触觉编码器）。
+当前KL对照沿用 `training.lr=2e-4`（WM/Critic）、`training.pi_lr=2e-5`（Actor，含goal和触觉编码器）。
 省略 `pi_lr` 或设为 `null` 时，Actor沿用 `lr`，旧配置行为保持兼容。
 两者使用相同的cosine衰减比例，恢复训练后按当前配置和已恢复的iteration调度。
 CSV的 `lr` 仍表示WM/Critic学习率；TensorBoard/W&B另外记录 `pi_lr`，终端打印两个实际值。
-本次只改变Actor学习率，KL/BC约束、归一化更新、奖励和其它训练参数均沿用上一组实验。
+在低Actor学习率对照上，两份配置均开启 `pi_kl_coef=0.01`、`pi_kl_std=0.1`。
+归一化更新、奖励和其它训练参数沿用上一组实验。
 `warmup_steps=64` 用于填充新Replay；由于WM与Critic已有教师权重，`wm_only_iters=0`，
 填充后即开始联合更新。两份配置的其余训练参数相同，使用独立实验名。
+
+KL参考是各自蒸馏完成的学生 `model_16.pt`，在初始化时复制其完整Actor和归一化统计后冻结。
+每次Actor更新，为KL独立抽取 `pi_batch` 个有效真实Replay样本，覆盖episode尾段，
+不要求剩余完整的想象horizon。使用重建的同一份10帧观测历史、同一份观测噪声和goal，
+分别计算当前Actor与固定参考的29维动作。KL分支输入detach，参考前向no_grad；
+梯度只流向当前Actor，不进入WM/Critic，也不更新参考的归一化统计。
+
+确定性Actor用相同固定方差的高斯代理定义KL（不是新增动作采样）：
+
+```text
+pi_kl = mean_batch(sum_action((action - reference_action)^2)) / (2 * pi_kl_std^2)
+pi_kl_loss = pi_kl_coef * pi_kl
+pi_loss = pi_mbrl_loss + pi_kl_loss
+```
+
+29维动作按维度求和、batch求均值，不额外除以想象horizon。取std=0.1、coef=0.01时，
+附加loss等价于14.5倍的逐维动作MSE；该系数只是初始尺度，需要自主评测验证。
+约束在这些真实Replay观测上计算一次，而非在每个预测状态上计算。
+它是软惩罚，没有严格KL上限，仍允许策略改进和偏离；参考不会随每轮Actor更新而替换。
+当前Actor归一化仍在线更新，参考使用保存的原始统计，因而该项也会度量统计漂移造成的动作变化。
+
+CSV、TensorBoard/W&B分别记录总 `pi_loss`、纯MBRL项 `pi_mbrl_loss`、原始 `pi_kl` 和加权 `pi_kl_loss`。
+旧CSV表头与新增字段不匹配时拒绝追加，恢复时使用新日志目录（标准mjlab入口会自动创建）。
+完整checkpoint保存冻结参考及其DAgger来源；resume恢复原参考，推理只加载Actor。
+旧无参考的MBRL checkpoint不能直接开启KL恢复，须从原DAgger学生新建实验。
+`pi_kl_coef=0` 可关闭此项，默认值也是0；旧配置和旧checkpoint仍可在关闭KL时使用。
 
 ```bash
 .venv/bin/python -m supermimic.scripts.train_open_door --config configs/open_door_student_mbrl_tactile.json --check
 .venv/bin/python -m supermimic.scripts.train_open_door --config configs/open_door_student_mbrl_tactile.json
 ```
 
-以下命令要求CUHK已同步支持 `pi_lr` 的代码和两份配置。服务器旧代码不能解析此字段，
-仅同步JSON不足以启用独立Actor学习率。先进行500轮短实验，模型仍每200轮保存，最后500轮也保存：
+以下命令要求CUHK已同步支持 `pi_kl_coef`、`pi_kl_std` 的代码和两份配置。
+仅同步JSON不足以启用KL。先进行500轮短实验，模型仍每200轮保存，最后500轮也保存：
 
 ```bash
 cd /home/wangfeng/supermimic_vibed
 mkdir -p logs/slurm
 sbatch --account=interns --partition=gpu --nodes=1 --ntasks=1 --gres=gpu:a100:1 \
   --cpus-per-task=8 --mem=32G --time=24:00:00 \
-  --job-name=door-mbrl-touch-pi2e-5 --output=logs/slurm/%x-%j.out \
+  --job-name=door-mbrl-touch-kl001 --output=logs/slurm/%x-%j.out \
   --wrap='OMP_NUM_THREADS=8 PYTHONUNBUFFERED=1 srun --ntasks=1 .venv/bin/python -u -m supermimic.scripts.train_open_door --config configs/open_door_student_mbrl_tactile.json --agent.max-iterations 500 --env.commands.motion.motion-dir /data/wangfeng/supermimic_open_door_tracking/data/motions/open_door_prepared/video1_g1_door_video45_centered_asset.npz'
 ```
 
 无触觉实验将配置改为 `configs/open_door_student_mbrl_proprio.json`，job名称改为
-`door-mbrl-proprio-pi2e-5`。两份配置已包含各自的学生路径，均从原DAgger学生重新初始化。
+`door-mbrl-proprio-kl001`。两份配置已包含各自的学生路径，均从原DAgger学生重新初始化。
 `student_checkpoint` 和 `teacher_checkpoint` 必须同时指定，不能与 `wm_checkpoint` 或
 `finetune_checkpoint` 混用；入口会校验学生输入、触觉映射与教师动力学/任务的一致性。
 
@@ -285,6 +312,7 @@ BF16与torch.compile开启，完成520轮（含500轮WM预热和20轮Actor/Criti
 | 每卡环境数、WM/Actor batch | `training.num_envs`、`wm_batch`、`pi_batch` |
 | 迭代数、预热、Replay、想象长度 | `training.iterations`、`wm_only_iters`、`buffer_steps`、`horizon` |
 | 学习率、折扣、保存频率 | `training.lr`、可选 `pi_lr`、`gamma`、`save_interval` |
+| 固定DAgger参考KL强度和尺度 | `training.pi_kl_coef`、`pi_kl_std` |
 | 日志和模型位置、实验名 | `training.log_root`、`run_name` |
 | 轨迹目录、episode时限 | `task.motion_dir`、`episode_length_s` |
 | RSI采样方式及混合权重 | `task.sampling_mode`、`uniform_weight`、`current_weight`、`history_weight` |

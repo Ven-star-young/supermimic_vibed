@@ -42,6 +42,10 @@ class SuperMimicRunnerCfg(RslRlBaseRunnerCfg):
     """Initial WM/Critic learning rate and default Actor learning rate."""
     pi_lr: float | None = None
     """Optional Actor learning rate; shares lr's cosine decay schedule."""
+    pi_kl_coef: float = 0.0
+    """Penalty for action KL to the frozen initial DAgger Actor on real Replay histories."""
+    pi_kl_std: float = 0.1
+    """Fixed Gaussian surrogate std in normalized action units; does not add sampling noise."""
     gamma: float = 0.99
     """Reward discount used by the learner and reset curriculum."""
     lam: float = 0.95
