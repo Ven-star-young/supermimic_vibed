@@ -14,14 +14,15 @@
   --config configs/open_door_dagger_observable.json
 ```
 
-默认读取背部开门教师 `logs/wm_transfer/back_model_10000.pt`，并行环境数由 JSON 配置决定，
-输出至 `logs/open_door_dagger_tactile/`。训练使用原任务的随机初始化和物性分布，
+两份正式配置默认读取触觉教师
+`logs/rsl_rl/supermimic_open_door/2026-11-12_11-21-19_back_tracking_dr_rsi_tactile/model_7800.pt`，
+使用3072环境、batch1024、16轮DAgger，触觉学生输出至
+`logs/open_door_dagger_tactile_teacher7800/`。训练使用原任务的随机初始化和物性分布，
 开始前从教师 checkpoint 恢复并核对任务配置。侧面任务可替换 `expert_checkpoint` 和
 `motion_dir` 为匹配的侧面模型及 NPZ；入口按 checkpoint 的任务类型选择环境。
 输出目录必须为空，避免覆盖已有实验。
 
-也可使用由 `configs/open_door_tactile.json` 训练的背部触觉expert：将
-`expert_checkpoint` 指向该模型，并设 `expert_observation_dim=326`。入口恢复教师的触觉
+两份配置均设 `expert_observation_dim=326`。入口恢复教师的触觉
 布局和counts参数；教师历史为原102维状态＋112维counts＋112维validity。
 学生仍只提取前93维本体，`use_tactile` 独立决定学生是否使用触觉，教师保持冻结。
 
@@ -32,7 +33,7 @@
 `round_index` 从 0 开始；beta 表示每个环境选择教师动作的概率，不混合关节动作数值。
 
 无触觉对照使用 `configs/open_door_dagger_proprio.json`：仅将 `use_tactile` 设为
-`false`，输出目录改为 `logs/open_door_dagger_proprio/`，其余训练参数与触觉配置一致。
+`false`，输出目录改为 `logs/open_door_dagger_proprio_teacher7800/`，其余训练参数与触觉配置一致。
 学生不创建触觉编码器，Actor 输入为本体历史930维＋goal latent32维，共962维；
 触觉读数和有效性掩码均不参与动作计算。仿真中的传感器与现有日志仍保留作诊断，
 因此日志中有触觉读数不表示学生使用了触觉。
@@ -43,15 +44,27 @@
 生命周期保持不变。将该选项设为
 `false` 可进行随机目标编码器的消融实验。
 
-在 CUHK 项目根目录提交无触觉训练（共用现有 Slurm 脚本）：
+CUHK两份同名JSON需将 `motion_dir` 设为
+`/data/wangfeng/supermimic_open_door_tracking/data/motions/open_door_prepared/video1_g1_door_video45_centered_asset.npz`，
+其余内容与本地一致。以下命令每组申请1张A100，直接读取对应JSON：
 
 ```bash
+cd /home/wangfeng/supermimic_vibed
 mkdir -p logs/slurm
-sbatch --job-name=door-proprio-distill tools/distill_open_door.sbatch configs/open_door_dagger_proprio.json
+sbatch --account=interns --partition=gpu --nodes=1 --ntasks=1 --gres=gpu:a100:1 \
+  --cpus-per-task=8 --mem=32G --time=24:00:00 \
+  --job-name=door-distill-t7800-touch --output=logs/slurm/%x-%j.out \
+  --wrap='OMP_NUM_THREADS=8 PYTHONUNBUFFERED=1 srun --ntasks=1 .venv/bin/python -u -m supermimic.scripts.distill_open_door --config configs/open_door_dagger_observable.json'
+sbatch --account=interns --partition=gpu --nodes=1 --ntasks=1 --gres=gpu:a100:1 \
+  --cpus-per-task=8 --mem=32G --time=24:00:00 \
+  --job-name=door-distill-t7800-proprio --output=logs/slurm/%x-%j.out \
+  --wrap='OMP_NUM_THREADS=8 PYTHONUNBUFFERED=1 srun --ntasks=1 .venv/bin/python -u -m supermimic.scripts.distill_open_door --config configs/open_door_dagger_proprio.json'
 ```
 
-Slurm 脚本的首个参数可选；省略时继续使用原触觉配置。每次运行在配置的输出目录下
-新建 `slurm-JOB_ID/`，保存该次配置和模型。
+现有 `tools/distill_open_door.sbatch` 会覆盖JSON中的教师路径为旧无触觉10000，
+不适用于本次7800实验；以上命令绕开该覆盖，CUHK无需修改代码。
+模型和生效配置直接保存到JSON指定的两个新输出目录，CUHK的 `logs` 指向
+`/data/wangfeng/supermimic_vibed/logs`。重新提交同一组前应指定新的空输出目录。
 
 ## 输入与编码
 
@@ -89,7 +102,7 @@ Actor保留原本体／goal归一化、goal编码器及decoder隐层，输入为
 ```
 
 `STUDENT_INPUT_DIM=930` 仍表示本体历史长度，完整decoder输入是1026。
-触觉latent只拼接一次；默认教师保持原网络，可选触觉expert需先单独在RL阶段训练。
+触觉latent只拼接一次；当前两组共用已训练的触觉expert7800。
 蒸馏不更新教师，也不训练世界模型或Critic。
 学生动作解码器及触觉编码器从头训练，goal分支按初始化配置处理；动作仍由现有action manager转换：
 
@@ -145,7 +158,7 @@ CPU环形容量受 `capacity` 限制，采样时搬到训练设备；归一化�
 import torch
 from supermimic.distillation.open_door import OpenDoorStudentPolicy
 
-checkpoint = torch.load("logs/open_door_dagger_tactile/model_10.pt", weights_only=False)
+checkpoint = torch.load("logs/open_door_dagger_tactile_teacher7800/model_16.pt", weights_only=False)
 student = OpenDoorStudentPolicy(use_tactile=checkpoint["config"].get("use_tactile", True)).eval()
 student.load_state_dict(checkpoint["student"], strict=True)
 with torch.no_grad():
@@ -157,7 +170,7 @@ with torch.no_grad():
 
 ```bash
 .venv/bin/python tools/play_tactile.py --task open_door \
-  --checkpoint logs/open_door_dagger_tactile/model_10.pt \
+  --checkpoint logs/open_door_dagger_tactile_teacher7800/model_16.pt \
   --reference data/motions/open_door_prepared/video1_g1_door_video45_centered_asset.npz
 ```
 
@@ -177,9 +190,10 @@ with torch.no_grad():
 ```
 
 `training.student_checkpoint` 分别指向本地归档的
-`logs/open_door_dagger_tactile/cuhk-slurm-271/model_16.pt` 和
-`logs/open_door_dagger_proprio/cuhk-slurm-272/model_16.pt`；
-`training.teacher_checkpoint` 均指向 `logs/wm_transfer/back_model_10000.pt`。
+`logs/open_door_dagger_tactile_teacher7800/model_16.pt` 和
+`logs/open_door_dagger_proprio_teacher7800/model_16.pt`；
+`training.teacher_checkpoint` 均指向
+`logs/rsl_rl/supermimic_open_door/2026-11-12_11-21-19_back_tracking_dr_rsi_tactile/model_7800.pt`。
 这两个来源必须同时指定，不能与 `wm_checkpoint` 或 `finetune_checkpoint` 混用。
 
 Actor完整继承学生的 `enc`、`dec`、可选触觉编码器及归一化统计，保留已经学到的goal编码。
@@ -191,5 +205,7 @@ Actor每帧仍只有本体93维及可选counts112/validity112，即93或317维�
 两份配置使用单卡2048环境、WM/Actor batch各512、32步想象、64步Replay填充、
 `wm_only_iters=0`，保留MLP bf16及编译。产物是带 `pi`、`wm`、`critic` 和优化器状态的
 完整RL checkpoint；之后正常resume不依赖原始学生或教师文件。
+当前学习率对照仅将Actor设为 `training.pi_lr=2e-5`，WM/Critic保持 `training.lr=2e-4`；
+未加入KL/BC约束，也未冻结归一化统计。建议先按工作流命令运行500轮，确认早期自主评测再决定延长。
 `tools/play_tactile.py` 同时支持蒸馏学生与新的RL checkpoint。
 CUHK路径覆盖及Slurm命令见[背部开门工作流](../../../docs/open-door-workflow.md#蒸馏学生继续-supermimic-mbrl)。

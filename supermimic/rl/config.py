@@ -39,7 +39,9 @@ class SuperMimicRunnerCfg(RslRlBaseRunnerCfg):
     pi_batch: int = 4096
     """Imagined trajectories per policy update."""
     lr: float = 2e-4
-    """Initial learning rate for all three optimizers."""
+    """Initial WM/Critic learning rate and default Actor learning rate."""
+    pi_lr: float | None = None
+    """Optional Actor learning rate; shares lr's cosine decay schedule."""
     gamma: float = 0.99
     """Reward discount used by the learner and reset curriculum."""
     lam: float = 0.95

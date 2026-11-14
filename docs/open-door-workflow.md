@@ -129,10 +129,11 @@ CUHK作业285在单卡2048环境、WM/Actor batch各512、horizon32下完成两�
 
 | 配置 | `training.student_checkpoint` 默认值 |
 |---|---|
-| [`open_door_student_mbrl_tactile.json`](../configs/open_door_student_mbrl_tactile.json) | `logs/open_door_dagger_tactile/cuhk-slurm-271/model_16.pt` |
-| [`open_door_student_mbrl_proprio.json`](../configs/open_door_student_mbrl_proprio.json) | `logs/open_door_dagger_proprio/cuhk-slurm-272/model_16.pt` |
+| [`open_door_student_mbrl_tactile.json`](../configs/open_door_student_mbrl_tactile.json) | `logs/open_door_dagger_tactile_teacher7800/model_16.pt` |
+| [`open_door_student_mbrl_proprio.json`](../configs/open_door_student_mbrl_proprio.json) | `logs/open_door_dagger_proprio_teacher7800/model_16.pt` |
 
-两者的 `training.teacher_checkpoint` 默认都是 `logs/wm_transfer/back_model_10000.pt`。
+两者的 `training.teacher_checkpoint` 都是触觉教师
+`logs/rsl_rl/supermimic_open_door/2026-11-12_11-21-19_back_tracking_dr_rsi_tactile/model_7800.pt`。
 初始化时完整复制学生的 Actor、goal encoder、可选触觉编码器及归一化统计；
 WM、Critic及各自归一化统计从教师复制。三个网络随后按原SuperMimic循环继续更新，
 不重新用教师覆盖学生的goal encoder，也不冻结WM或Critic。优化器、迭代和采样计数从零开始，
@@ -145,7 +146,12 @@ Replay重新采集；这一步是建立新的RL实验，不是恢复教师的训
 奖励、终止和物性分布沿用背部expert。想象中的触觉由预测状态生成。
 
 两份配置采用单卡2048环境、WM/Actor batch各512、horizon32、Replay256步、
-每次10个WM batch和5轮Critic更新，保留学习率2e-4、MLP bf16及编译。
+每次10个WM batch和5轮Critic更新，保留MLP bf16及编译。
+当前学习率对照设 `training.lr=2e-4`（WM/Critic）、`training.pi_lr=2e-5`（Actor，含goal和触觉编码器）。
+省略 `pi_lr` 或设为 `null` 时，Actor沿用 `lr`，旧配置行为保持兼容。
+两者使用相同的cosine衰减比例，恢复训练后按当前配置和已恢复的iteration调度。
+CSV的 `lr` 仍表示WM/Critic学习率；TensorBoard/W&B另外记录 `pi_lr`，终端打印两个实际值。
+本次只改变Actor学习率，KL/BC约束、归一化更新、奖励和其它训练参数均沿用上一组实验。
 `warmup_steps=64` 用于填充新Replay；由于WM与Critic已有教师权重，`wm_only_iters=0`，
 填充后即开始联合更新。两份配置的其余训练参数相同，使用独立实验名。
 
@@ -154,19 +160,20 @@ Replay重新采集；这一步是建立新的RL实验，不是恢复教师的训
 .venv/bin/python -m supermimic.scripts.train_open_door --config configs/open_door_student_mbrl_tactile.json
 ```
 
-CUHK上的checkpoint目录没有本地归档前缀 `cuhk-`，通过现有CLI覆盖来源和动作路径：
+以下命令要求CUHK已同步支持 `pi_lr` 的代码和两份配置。服务器旧代码不能解析此字段，
+仅同步JSON不足以启用独立Actor学习率。先进行500轮短实验，模型仍每200轮保存，最后500轮也保存：
 
 ```bash
 cd /home/wangfeng/supermimic_vibed
 mkdir -p logs/slurm
 sbatch --account=interns --partition=gpu --nodes=1 --ntasks=1 --gres=gpu:a100:1 \
   --cpus-per-task=8 --mem=32G --time=24:00:00 \
-  --job-name=door-student-mbrl-tactile --output=logs/slurm/%x-%j.out \
-  --wrap='OMP_NUM_THREADS=8 PYTHONUNBUFFERED=1 .venv/bin/python -m supermimic.scripts.train_open_door --config configs/open_door_student_mbrl_tactile.json --agent.student-checkpoint logs/open_door_dagger_tactile/slurm-271/model_16.pt --agent.teacher-checkpoint /data/wangfeng/supermimic_vibed/logs/rsl_rl/supermimic_open_door/2026-10-31_17-06-12_back_tracking_dr_rsi/model_10000.pt --env.commands.motion.motion-dir /data/wangfeng/supermimic_open_door_tracking/data/motions/open_door_prepared/video1_g1_door_video45_centered_asset.npz'
+  --job-name=door-mbrl-touch-pi2e-5 --output=logs/slurm/%x-%j.out \
+  --wrap='OMP_NUM_THREADS=8 PYTHONUNBUFFERED=1 srun --ntasks=1 .venv/bin/python -u -m supermimic.scripts.train_open_door --config configs/open_door_student_mbrl_tactile.json --agent.max-iterations 500 --env.commands.motion.motion-dir /data/wangfeng/supermimic_open_door_tracking/data/motions/open_door_prepared/video1_g1_door_video45_centered_asset.npz'
 ```
 
-无触觉实验将配置改为 `configs/open_door_student_mbrl_proprio.json`，学生来源改为
-`logs/open_door_dagger_proprio/slurm-272/model_16.pt`，并使用独立job名称。
+无触觉实验将配置改为 `configs/open_door_student_mbrl_proprio.json`，job名称改为
+`door-mbrl-proprio-pi2e-5`。两份配置已包含各自的学生路径，均从原DAgger学生重新初始化。
 `student_checkpoint` 和 `teacher_checkpoint` 必须同时指定，不能与 `wm_checkpoint` 或
 `finetune_checkpoint` 混用；入口会校验学生输入、触觉映射与教师动力学/任务的一致性。
 
@@ -277,7 +284,7 @@ BF16与torch.compile开启，完成520轮（含500轮WM预热和20轮Actor/Criti
 |---|---|
 | 每卡环境数、WM/Actor batch | `training.num_envs`、`wm_batch`、`pi_batch` |
 | 迭代数、预热、Replay、想象长度 | `training.iterations`、`wm_only_iters`、`buffer_steps`、`horizon` |
-| 学习率、折扣、保存频率 | `training.lr`、`gamma`、`save_interval` |
+| 学习率、折扣、保存频率 | `training.lr`、可选 `pi_lr`、`gamma`、`save_interval` |
 | 日志和模型位置、实验名 | `training.log_root`、`run_name` |
 | 轨迹目录、episode时限 | `task.motion_dir`、`episode_length_s` |
 | RSI采样方式及混合权重 | `task.sampling_mode`、`uniform_weight`、`current_weight`、`history_weight` |

@@ -68,6 +68,12 @@ class SuperMimicRunner:
                 raise ValueError("Student initialization cannot be combined with wm_checkpoint or finetune_checkpoint")
             if self.cfg.no_critic:
                 raise ValueError("Student MBRL initialization requires critic training (no_critic=False)")
+        for name in ("lr", "pi_lr"):
+            value = getattr(self.cfg, name)
+            if name == "pi_lr" and value is None:
+                continue
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(f"{name} must be finite and positive")
         positive = ("buffer_steps", "horizon", "wm_window", "wm_batches", "wm_batch", "pi_batch",
                     "critic_epochs", "critic_minibatches", "lr_decay_iters", "log_every", "save_interval")
         if any(getattr(self.cfg, name) < 1 for name in positive):
@@ -91,7 +97,8 @@ class SuperMimicRunner:
         self.opt_wm = torch.optim.Adam(self.wm.parameters(), lr=self.cfg.lr)
         shared = set() if encoder is None else {id(p) for p in encoder.parameters()}
         self.policy_parameters = [p for p in self.pi.parameters() if id(p) not in shared]
-        self.opt_pi = torch.optim.Adam(self.policy_parameters, lr=self.cfg.lr, betas=(0.9, 0.95))
+        self.opt_pi = torch.optim.Adam(self.policy_parameters, lr=self._learning_rate(0, self.cfg.pi_lr),
+                                       betas=(0.9, 0.95))
         self.opt_v = torch.optim.Adam(self.critic.parameters(), lr=self.cfg.lr)
         if distributed.active():
             settings = {k: v for k, v in self.train_cfg.items() if k != "seed"}
@@ -144,9 +151,10 @@ class SuperMimicRunner:
         return self.task.critic_input(state, frame, normalized_context, goal,
                                       self.goal_frames, geometry)
 
-    def _learning_rate(self, iteration):
+    def _learning_rate(self, iteration, base_lr=None):
         phase = min(iteration / self.cfg.lr_decay_iters, 1.0)
-        return self.cfg.lr * (0.03 + 0.97 * 0.5 * (1 + math.cos(math.pi * phase)))
+        initial = self.cfg.lr if base_lr is None else base_lr
+        return initial * (0.03 + 0.97 * 0.5 * (1 + math.cos(math.pi * phase)))
 
     def make_replay_env(self):
         from .vecenv import ReplayEnvAdapter
@@ -345,9 +353,10 @@ class SuperMimicRunner:
             self.collect(max(self.cfg.warmup_steps, self.cfg.wm_window), stats)
             for iteration in range(start_iteration, end_iteration):
                 lr = self._learning_rate(iteration)
-                for optimizer in (self.opt_wm, self.opt_pi, self.opt_v):
+                for optimizer, base_lr in ((self.opt_wm, self.cfg.lr), (self.opt_pi, self.cfg.pi_lr),
+                                            (self.opt_v, self.cfg.lr)):
                     for group in optimizer.param_groups:
-                        group["lr"] = lr
+                        group["lr"] = self._learning_rate(iteration, base_lr)
                 step_accumulator += 1 / self.cfg.utd
                 steps = int(step_accumulator)
                 step_accumulator -= steps
@@ -657,14 +666,16 @@ class SuperMimicRunner:
                 if write_header:
                     writer.writeheader()
                 writer.writerow(row)
+        metrics = {**row, "pi_lr": self.opt_pi.param_groups[0]["lr"]}
         if self._writer is not None:
-            for key, value in row.items():
+            for key, value in metrics.items():
                 self._writer.add_scalar(key, value, self.current_learning_iteration)
             self._writer.flush()
         if self._wandb_run is not None:
-            self._wandb_run.log(row, step=self.current_learning_iteration)
+            self._wandb_run.log(metrics, step=self.current_learning_iteration)
         print(f"it {self.current_learning_iteration} | {row['wall_h']:.3f} h | wm {row['wm_loss']:.4f} "
               f"e8 {row['wm_err8']:.4f} | pi {row['pi_loss']:.3f} v {row['v_loss']:.4f} "
               f"imag_r {row['imag_rew']:.3f} surv {row['imag_survival']:.3f} | sim_r {row['sim_rew']:.3f} "
               f"invalid {row['sim_invalid']:.4%} "
-              f"ep_len {row['ep_len']:.1f} ep_ret {row['ep_ret_norm']:.3f} | {rate:.2f} it/s", flush=True)
+              f"ep_len {row['ep_len']:.1f} ep_ret {row['ep_ret_norm']:.3f} | {rate:.2f} it/s | "
+              f"lr(wm/v) {lr:.2e} lr(pi) {metrics['pi_lr']:.2e}", flush=True)
