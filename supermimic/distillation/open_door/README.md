@@ -196,7 +196,7 @@ with torch.no_grad():
 `logs/rsl_rl/supermimic_open_door/2026-11-12_11-21-19_back_tracking_dr_rsi_tactile/model_7800.pt`。
 这两个来源必须同时指定，不能与 `wm_checkpoint` 或 `finetune_checkpoint` 混用。
 
-Actor完整继承学生的 `enc`、`dec`、可选触觉编码器及归一化统计，保留已经学到的goal编码。
+首次从蒸馏新建训练时，Actor完整继承学生的 `enc`、`dec`、可选触觉编码器及归一化统计，保留已经学到的goal编码。
 WM和Critic从教师初始化，包括各自的归一化统计，随后都继续更新；优化器和训练计数重新建立。
 训练改为想象轨迹上的奖励优化：真实仿真转移训练WM，想象轨迹的λ-return用于拟合Critic。
 Actor每帧仍只有本体93维及可选counts112/validity112，即93或317维；
@@ -211,6 +211,7 @@ Actor每帧仍只有本体93维及可选counts112/validity112，即93或317维�
 以等方差高斯代理KL（动作维求和、batch求均值）作为额外Actor损失。
 当前Actor统计仍按原逻辑更新，参考统计不更新。完整RL checkpoint内保存参考，恢复时不会改用当前Actor作参考。
 设 `pi_kl_coef=0` 可关闭；旧无参考的MBRL checkpoint不能直接开启KL恢复。
-建议先按工作流命令运行500轮，确认早期自主评测再决定延长。
+当前有触觉配置从作业441的KL `model_500.pt` 恢复，追加1500轮至总计2000轮，每200轮保存。
+完整恢复训练状态及原始冻结参考，Replay重新填充；无触觉配置仍从原DAgger起点新建训练。
 `tools/play_tactile.py` 同时支持蒸馏学生与新的RL checkpoint。
 CUHK路径覆盖及Slurm命令见[背部开门工作流](../../../docs/open-door-workflow.md#蒸馏学生继续-supermimic-mbrl)。

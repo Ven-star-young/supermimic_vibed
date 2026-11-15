@@ -134,7 +134,7 @@ CUHK作业285在单卡2048环境、WM/Actor batch各512、horizon32下完成两�
 
 两者的 `training.teacher_checkpoint` 都是触觉教师
 `logs/rsl_rl/supermimic_open_door/2026-11-12_11-21-19_back_tracking_dr_rsi_tactile/model_7800.pt`。
-初始化时完整复制学生的 Actor、goal encoder、可选触觉编码器及归一化统计；
+首次从蒸馏初始化时完整复制学生的 Actor、goal encoder、可选触觉编码器及归一化统计；
 WM、Critic及各自归一化统计从教师复制。三个网络随后按原SuperMimic循环继续更新，
 不重新用教师覆盖学生的goal encoder，也不冻结WM或Critic。优化器、迭代和采样计数从零开始，
 Replay重新采集；这一步是建立新的RL实验，不是恢复教师的训练进度。
@@ -187,20 +187,24 @@ CSV、TensorBoard/W&B分别记录总 `pi_loss`、纯MBRL项 `pi_mbrl_loss`、原
 .venv/bin/python -m supermimic.scripts.train_open_door --config configs/open_door_student_mbrl_tactile.json
 ```
 
-以下命令要求CUHK已同步支持 `pi_kl_coef`、`pi_kl_std` 的代码和两份配置。
-仅同步JSON不足以启用KL。先进行500轮短实验，模型仍每200轮保存，最后500轮也保存：
+CUHK已有支持KL的代码；以下命令使用与本地同步的有触觉续训配置，从作业441的
+`2026-11-14_15-07-40_back_student_mbrl_tactile_pi_lr2e-5_kl0.01/model_500.pt`
+续训：`resume=true`、`iterations=1500`，总计到2000轮，每200轮保存（下一份为600轮）。
+`iterations`在resume时表示追加轮数；命令直接采用配置，不再传旧的 `--agent.max-iterations 500`。
+完整恢复Actor、WM、Critic、优化器、归一化和原始冻结DAgger参考，学习率按累计轮数继续；
+Replay不在checkpoint中，恢复后重新采集64步填充，因此不等价于不中断训练的逐步复现。
 
 ```bash
 cd /home/wangfeng/supermimic_vibed
 mkdir -p logs/slurm
 sbatch --account=interns --partition=gpu --nodes=1 --ntasks=1 --gres=gpu:a100:1 \
   --cpus-per-task=8 --mem=32G --time=24:00:00 \
-  --job-name=door-mbrl-touch-kl001 --output=logs/slurm/%x-%j.out \
-  --wrap='OMP_NUM_THREADS=8 PYTHONUNBUFFERED=1 srun --ntasks=1 .venv/bin/python -u -m supermimic.scripts.train_open_door --config configs/open_door_student_mbrl_tactile.json --agent.max-iterations 500 --env.commands.motion.motion-dir /data/wangfeng/supermimic_open_door_tracking/data/motions/open_door_prepared/video1_g1_door_video45_centered_asset.npz'
+  --job-name=door-mbrl-touch-kl001-2k --output=logs/slurm/%x-%j.out \
+  --wrap='OMP_NUM_THREADS=8 PYTHONUNBUFFERED=1 srun --ntasks=1 .venv/bin/python -u -m supermimic.scripts.train_open_door --config configs/open_door_student_mbrl_tactile.json --env.commands.motion.motion-dir /data/wangfeng/supermimic_open_door_tracking/data/motions/open_door_prepared/video1_g1_door_video45_centered_asset.npz'
 ```
 
-无触觉实验将配置改为 `configs/open_door_student_mbrl_proprio.json`，job名称改为
-`door-mbrl-proprio-kl001`。两份配置已包含各自的学生路径，均从原DAgger学生重新初始化。
+无触觉配置 `configs/open_door_student_mbrl_proprio.json` 仍为从原DAgger起点新建训练，
+不加载有触觉组的checkpoint；不能通过切换配置直接复用上述续训设置。
 `student_checkpoint` 和 `teacher_checkpoint` 必须同时指定，不能与 `wm_checkpoint` 或
 `finetune_checkpoint` 混用；入口会校验学生输入、触觉映射与教师动力学/任务的一致性。
 

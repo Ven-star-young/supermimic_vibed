@@ -1,10 +1,10 @@
 {
   "training": {
     "num_envs": 2048,
-    "iterations": 10000,
+    "iterations": 1500,
     "gpu_ids": [0],
     "log_root": "logs/rsl_rl",
-    "run_name": "back_student_mbrl_tactile_pi_lr2e-5_kl0.01",
+    "run_name": "back_student_mbrl_tactile_pi_lr2e-5_kl0.01_resume500_to2000",
     "seed": 0,
     "wm_batch": 512,
     "pi_batch": 512,
@@ -31,9 +31,9 @@
     "save_interval": 200,
     "log_every": 10,
     "logger": "tensorboard",
-    "resume": false,
-    "load_run": ".*",
-    "load_checkpoint": "model_.*.pt",
+    "resume": true,
+    "load_run": "2026-11-14_15-07-40_back_student_mbrl_tactile_pi_lr2e-5_kl0.01",
+    "load_checkpoint": "model_500.pt",
     "student_checkpoint": "logs/open_door_dagger_tactile_teacher7800/model_16.pt",
     "teacher_checkpoint": "logs/rsl_rl/supermimic_open_door/2026-11-12_11-21-19_back_tracking_dr_rsi_tactile/model_7800.pt"
   },
