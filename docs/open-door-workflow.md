@@ -220,6 +220,89 @@ sbatch --account=interns --partition=gpu --nodes=1 --ntasks=1 --gres=gpu:a100:1 
 
 回放从RL checkpoint恢复Actor观测模式；无触觉策略的触觉面板仅用于诊断。
 
+### 持续 teacher-MSE 的学生 MBRL
+
+[`open_door_student_mbrl_teacher.json`](../configs/open_door_student_mbrl_teacher.json) 是独立的新实验配置。
+它从原有触觉 DAgger `logs/open_door_dagger_tactile_teacher7800/model_16.pt` 新建训练，
+WM/Critic从同一 `teacher7800` 初始化并继续更新，同时额外加载并冻结教师的完整 `pi` 和归一化统计。
+`resume=false`，优化器和计数从零开始。该配置不使用已发生MBRL更新的学生作为起点。
+另一个 `r24` DAgger实验是从头重跑；它与旧run的 `model16` 属于跨run比较，不能作为
+“同一次训练从16轮延长到24轮”的严格因果对照。
+
+该设计借鉴 [SUGARv2 §3.3](https://arxiv.org/abs/2611.09266) 在RL期间持续保留教师动作MSE；
+把论文的PPO替换为本项目的MBRL是工程适配，尚不能视为论文结果的复现。
+新配置的任务奖励、终止和物性分布沿用原实验，教师不参与动作执行，也不进行teacher/student rollout混合。
+
+| 配置 | 当前值与含义 |
+|---|---|
+| `iterations` | 1300：前300轮模型适配，之后1000轮联合更新 |
+| `warmup_steps` / `wm_only_iters` | 128步真实Replay填充 / 0轮单独WM训练 |
+| `model_adapt_iters` | 300：第1–300轮Actor不执行optimizer step，Actor统计不更新；WM和Critic更新 |
+| `freeze_actor_normalizers` | `true`：第301–1300轮也冻结继承的Actor obs/goal统计 |
+| `teacher_mse_coef` / `pi_kl_coef` | 固定5.0 / 0.0 |
+| `teacher_grad_steps` | 前10次联合更新分别计算原始MBRL loss和未加权teacher-MSE的梯度诊断 |
+| `pi_lr` / `lr` | Actor初始2e-5 / WM、Critic初始2e-4，沿现有累计迭代调度衰减 |
+| 环境 / batch / 想象长度 | 单卡2048环境，WM/Actor batch512，horizon32，WM window8 |
+| Replay / 保存 | 256步，每100轮保存；日志每10轮汇总 |
+
+第301轮才开始Actor联合优化，loss为：
+
+```text
+pi_teacher_mse = mean_batch_and_action((student_action - teacher_action)^2)
+pi_teacher_loss = teacher_mse_coef * pi_teacher_mse
+pi_loss = pi_mbrl_loss + pi_teacher_loss
+```
+
+每个真实控制步在执行动作前标注：教师使用学生实际收到的同一份带噪本体、原生触觉帧及其历史，
+仅插入当前状态的9维门特征，形成326维教师帧；学生帧保持317维，二者共享goal。
+历史中的previous action是实际执行的学生动作。teacher参数与统计冻结，标注不建立梯度；
+执行动作仍来自student及原有 `action_noise=0.1`，不会切换为teacher动作。
+首版要求teacher和student的触觉开关、布局与响应契约一致，支持326维触觉teacher→317维触觉student；
+不支持326维触觉teacher→93维无触觉student的跨触觉监督。
+
+Replay保留原完整物理state/context，并额外存储每条transition的实际学生观测帧317维和教师动作29维，
+均为float32。256×2048容量下新增约692 MiB显存；10帧历史从相邻记录恢复，不逐条重复保存10帧。
+teacher-MSE每次从真实Replay独立、均匀采样 `pi_batch` 个有效起点，包含不足32步剩余长度的episode尾段；
+有效terminal transition仍可监督。数值无效transition及无法恢复完整历史的起点会被过滤，
+不把跨episode历史或buffer覆盖后的缺失历史混入监督。该分支不使用imagined states，也不按失败/接触分层采样。
+
+日志增加 `pi_teacher_mse`、`pi_teacher_loss`、`actor_updated`。前10次联合更新（301–310）还记录
+`pi_mbrl_gradnorm`、`pi_teacher_gradnorm`、`pi_teacher_gradcos` 和 `pi_grad_diagnostic`。
+两个范数来自分别对原始loss求导、加权与裁剪之前的梯度；实际teacher项的梯度尺度是
+`5 × pi_teacher_gradnorm`。cosine用于观察两项方向是否冲突；未执行诊断时用
+`pi_grad_diagnostic=0` 区分占位值。诊断沿每10轮日志窗口汇总，不自动改变MSE系数、学习率或训练阶段。
+
+完整checkpoint内嵌冻结teacher的权重、任务/策略metadata及来源hash，正常resume不需要原teacher或student文件。
+恢复必须保留 `model_adapt_iters`、`wm_only_iters` 和 `freeze_actor_normalizers`，阶段按累计iteration继续。
+Replay和环境状态不在checkpoint内；恢复会重置环境并重新填充128步，所以不等价于不中断训练的逐步复现。
+`iterations` 在resume时仍表示追加轮数。
+
+本地从仓库根目录检查或启动：
+
+```bash
+.venv/bin/python -m supermimic.scripts.train_open_door --config configs/open_door_student_mbrl_teacher.json --check
+.venv/bin/python -m supermimic.scripts.train_open_door --config configs/open_door_student_mbrl_teacher.json
+```
+
+`--check`只检查配置解析，不启动训练，也不验证checkpoint、动作文件或显存容量。
+先将新配置及对应代码同步到CUHK，并确认两个来源checkpoint可用，才可使用以下命令。
+本次仅提供命令，没有提交服务器作业。
+
+```bash
+cd /home/wangfeng/supermimic_vibed
+mkdir -p logs/slurm
+sbatch --account=interns --partition=gpu --nodes=1 --ntasks=1 --gres=gpu:a100:1 \
+  --cpus-per-task=8 --mem=32G --time=24:00:00 \
+  --job-name=door-mbrl-teacher-mse5 --output=logs/slurm/%x-%j.out \
+  --wrap='OMP_NUM_THREADS=8 PYTHONUNBUFFERED=1 srun --ntasks=1 .venv/bin/python -u -m supermimic.scripts.train_open_door --config configs/open_door_student_mbrl_teacher.json --env.commands.motion.motion-dir /data/wangfeng/supermimic_open_door_tracking/data/motions/open_door_prepared/video1_g1_door_video45_centered_asset.npz'
+```
+
+评测沿用现有本地FP32流程，不自动接入训练。每100轮checkpoint可在development集
+（32个配对随机场景，seed20261111）评测，并与teacher7800和原DAgger model16比较。
+主要指标为“完成参考且末角40–50°”，同时报告末角MAE、轨迹RMSE、完成率、归一化回报和非背部接触子步率。
+建议预留四组独立holdout：seeds20261115、20261116、20261117、20261118，每组32场；
+仅在development集选定最终候选后验证，不用holdout逐checkpoint选模或调参。
+
 ## 门物性随机化
 
 训练时每个环境在每次reset独立、均匀采样以下参数；一个episode内保持不变。

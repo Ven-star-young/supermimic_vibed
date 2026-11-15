@@ -46,6 +46,12 @@ class SuperMimicRunnerCfg(RslRlBaseRunnerCfg):
     """Penalty for action KL to the frozen initial DAgger Actor on real Replay histories."""
     pi_kl_std: float = 0.1
     """Fixed Gaussian surrogate std in normalized action units; does not add sampling noise."""
+    teacher_mse_coef: float = 0.0
+    """Continuous frozen-teacher supervision on real replay; mean over batch and actions."""
+    teacher_grad_steps: int = 10
+    """Initial joint updates recording separate MBRL/teacher gradient norms and cosine."""
+    freeze_actor_normalizers: bool = False
+    """Keep inherited Actor observation/goal statistics fixed throughout training."""
     gamma: float = 0.99
     """Reward discount used by the learner and reset curriculum."""
     lam: float = 0.95
@@ -62,6 +68,8 @@ class SuperMimicRunnerCfg(RslRlBaseRunnerCfg):
     """Replay prefill before updates, including after resuming."""
     wm_only_iters: int = 500
     """Initial learning iterations that update only the world model."""
+    model_adapt_iters: int = 0
+    """After WM-only iterations, update WM and Critic with the Actor and its statistics fixed."""
     wm_checkpoint: str | None = None
     """Initialize only WM weights/statistics on a fresh run; full resume takes precedence."""
     finetune_checkpoint: str | None = None

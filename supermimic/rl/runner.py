@@ -47,6 +47,9 @@ class SuperMimicRunner:
         self.pi = self.task.make_policy(self.history_length, self.goal_frames,
                                         self.geometry_bank).to(self.device)
         self.pi_reference = None
+        self.pi_teacher = None
+        self.teacher_metadata = None
+        self._teacher_history = None
         self.wm = self.critic = None
         self.buffer = self.replay_env = None
         self.log_dir = Path(log_dir) if log_dir is not None else None
@@ -80,6 +83,17 @@ class SuperMimicRunner:
             raise ValueError("pi_kl_coef must be finite and nonnegative")
         if not math.isfinite(self.cfg.pi_kl_std) or self.cfg.pi_kl_std <= 0:
             raise ValueError("pi_kl_std must be finite and positive")
+        if not math.isfinite(self.cfg.teacher_mse_coef) or self.cfg.teacher_mse_coef < 0:
+            raise ValueError("teacher_mse_coef must be finite and nonnegative")
+        if any(getattr(self.cfg, name) < 0 for name in ("wm_only_iters", "model_adapt_iters", "teacher_grad_steps")):
+            raise ValueError("Training stage lengths and teacher_grad_steps must be nonnegative")
+        if self.cfg.model_adapt_iters and self.cfg.no_critic:
+            raise ValueError("Model adaptation requires a Critic")
+        if self.cfg.teacher_mse_coef > 0:
+            if not callable(getattr(self.task, "make_teacher_policy", None)):
+                raise ValueError("This task does not support frozen teacher supervision")
+            if self.cfg.buffer_steps < self.history_length:
+                raise ValueError("Teacher replay must retain at least one complete observation history")
         positive = ("buffer_steps", "horizon", "wm_window", "wm_batches", "wm_batch", "pi_batch",
                     "critic_epochs", "critic_minibatches", "lr_decay_iters", "log_every", "save_interval")
         if any(getattr(self.cfg, name) < 1 for name in positive):
@@ -170,6 +184,23 @@ class SuperMimicRunner:
         """Optional experiment hook; ordinary tasks keep their existing scene."""
 
     @torch.no_grad()
+    def _label_teacher(self, student_frame, goal):
+        env = self.replay_env
+        frame = self.task.teacher_observation(env.state(), env.xi, student_frame)
+        if self._teacher_history is None:
+            if bool((env.ep_step != 0).any()):
+                raise RuntimeError("Reset environments before starting teacher history collection")
+            self._teacher_history = frame[:, None].expand(-1, self.history_length, -1).clone()
+        else:
+            self._teacher_history = torch.cat((self._teacher_history[:, 1:], frame[:, None]), dim=1)
+            reset = env.ep_step == 0
+            self._teacher_history[reset] = frame[reset, None]
+        action = self.pi_teacher(self._teacher_history, goal)
+        if not bool(torch.isfinite(action).all()):
+            raise FloatingPointError("Nonfinite frozen teacher action")
+        return action
+
+    @torch.no_grad()
     def collect(self, num_steps, stats):
         if num_steps == 0:
             return
@@ -180,11 +211,20 @@ class SuperMimicRunner:
             observations = self.env.get_observations()
             history = observations["policy_history"].reshape(env.N, self.history_length, self.dims.observation)
             goal = observations["goal"]
-            self.pi.update_normalizers(history[:, -1:], goal)
+            adapting = (self.cfg.model_adapt_iters > 0 and self.current_learning_iteration
+                        < self.cfg.wm_only_iters + self.cfg.model_adapt_iters)
+            if not self.cfg.freeze_actor_normalizers and not adapting:
+                self.pi.update_normalizers(history[:, -1:], goal)
+            if self.cfg.teacher_mse_coef > 0:
+                # Clone before stepping: native history is mutated during step/reset.
+                student_frame = history[:, -1].clone()
+                teacher_action = self._label_teacher(student_frame, goal).clone()
             action = self.pi(history, goal, self.task.geometry_ids(env.xi))
             action = (action + self.cfg.action_noise * torch.randn_like(action)).clamp(-20, 20)
             with distributed.local_phase(self.device, "physics step"):
                 out = env.step(action)
+            if self.cfg.teacher_mse_coef > 0:
+                out.update(observation=student_frame, teacher_action=teacher_action)
             self.buffer.add(out)
             valid = out["valid"]
             initial = self.dynamics.unpack(out["s"][valid])
@@ -238,6 +278,31 @@ class SuperMimicRunner:
         reference.load_state_dict(weights, strict=True)
         self.pi_reference = reference.eval().requires_grad_(False)
 
+    def _set_teacher(self, weights, metadata, policy_config):
+        for key in ("history_length", "goal_frames"):
+            if policy_config.get(key) != self.policy_config[key]:
+                raise ValueError(f"Teacher {key} differs from the current policy")
+        teacher = self.task.make_teacher_policy(metadata, self.history_length, self.goal_frames).to(self.device)
+        expected = teacher.state_dict()
+        if not isinstance(weights, dict) or weights.keys() != expected.keys():
+            raise ValueError("Frozen teacher tensor keys do not match")
+        for name, value in weights.items():
+            if (not isinstance(value, torch.Tensor) or value.shape != expected[name].shape
+                    or value.dtype != expected[name].dtype or not bool(torch.isfinite(value).all())
+                    or (name.endswith((".var", ".count")) and bool((value < 0).any()))):
+                raise ValueError(f"Invalid frozen teacher tensor: {name}")
+        teacher.load_state_dict(weights, strict=True)
+        self.pi_teacher = teacher.eval().requires_grad_(False)
+        self.teacher_metadata = deepcopy(metadata)
+
+    def _replay_history(self, historical):
+        if "observation" in historical:
+            return historical["observation"].detach()
+        with torch.no_grad():
+            history = self.mdp.obs(self.dynamics.unpack(historical["s"]), historical["a_prev"],
+                                   historical["xi"], historical["f"])
+            return self.mdp.add_noise(history)
+
     def _policy_kl(self, history, goal, context):
         """Equal-variance Gaussian KL: sum actions, mean real Replay starts.
 
@@ -253,77 +318,98 @@ class SuperMimicRunner:
         action = self.pi(history, goal, geometry_ids)
         return 0.5 * ((action.float() - reference_action.float()) / self.cfg.pi_kl_std).square().sum(-1).mean()
 
-    def policy_update(self):
+    def policy_update(self, *, update_actor=True):
         cfg, batch, horizon = self.cfg, self.cfg.pi_batch, self.cfg.horizon
         sampling_error = None
         try:
             start, historical = self._sample_valid_starts()
             if cfg.pi_kl_coef > 0:
-                # KL uses real observations, including the tail excluded from imagination starts.
                 kl_start, kl_historical = self._sample_valid_starts(horizon=0)
+            if cfg.teacher_mse_coef > 0:
+                # Include real episode tails, which cannot start a full imagination.
+                teacher_start, teacher_historical = self._sample_valid_starts(horizon=0)
         except RuntimeError as exc:
             sampling_error = str(exc)
         distributed.require_all(sampling_error is None,
-            "Replay on at least one rank lacks valid imagination starts; collect more data or shorten horizon",
+            "Replay on at least one rank lacks valid histories; collect more data or shorten horizon",
             self.device)
         state = self.dynamics.unpack(start["s"])
         context, frame, previous = start["xi"], start["f"], start["a_prev"]
         normalized_context = self.dynamics.normalize_context(context)
-        with torch.no_grad():
-            history = self.mdp.obs(self.dynamics.unpack(historical["s"]), historical["a_prev"],
-                                   historical["xi"], historical["f"])
-            if cfg.pi_kl_coef > 0:
-                kl_history = self.mdp.obs(self.dynamics.unpack(kl_historical["s"]), kl_historical["a_prev"],
-                                          kl_historical["xi"], kl_historical["f"])
-        history = self.mdp.add_noise(history)
+        history = self._replay_history(historical)
         self.wm.requires_grad_(False)
         self.critic.requires_grad_(False)
-        goal = initial_goal = self.motion.goal(frame, self.goal_frames)
-        kl = state[0].new_zeros(())
-        if cfg.pi_kl_coef > 0:
-            kl = self._policy_kl(self.mdp.add_noise(kl_history),
-                                 self.motion.goal(kl_start["f"], self.goal_frames), kl_start["xi"])
-        initial_state = state
-        states, actions, previous_actions, frames, goals = [], [], [], [], []
-        for _ in range(horizon):
-            previous_actions.append(previous)
-            state, previous, history, frame, goal = self.imag_step(
-                state, history, frame, context, normalized_context, goal)
-            states.append(state)
-            actions.append(previous)
-            frames.append(frame)
-            goals.append(goal)
-        flatten = lambda values: torch.stack(values).flatten(0, 1)
-        all_states = tuple(flatten([step[i] for step in states]) for i in range(len(state)))
-        rewards, terminated = self.reward_term(all_states, flatten(frames), flatten(actions), flatten(previous_actions))
-        rewards, terminated = rewards.view(horizon, batch), terminated.view(horizon, batch)
-        survival = torch.cumprod(1 - terminated, 0)
-        alive_before = torch.cat((torch.ones(1, batch, device=self.device), survival[:-1]), 0)
-        discounts = cfg.gamma ** torch.arange(horizon, device=self.device, dtype=torch.float32).unsqueeze(-1)
-        returns = (discounts * alive_before * rewards).sum(0)
-        if not cfg.no_critic:
-            returns = returns + cfg.gamma ** horizon * survival[-1] * self.critic(
-                self._critic_input(state, frame, normalized_context, goal))
-        mbrl_loss = -returns.mean()
-        kl_loss = cfg.pi_kl_coef * kl
-        loss = mbrl_loss + kl_loss
         self.opt_pi.zero_grad(set_to_none=True)
-        loss.backward()
-        finite = distributed.average_gradients(self.opt_pi)
-        gradnorm = nn.utils.clip_grad_norm_(self.policy_parameters, 1.0) if finite else loss.new_tensor(float('nan'))
-        if finite:
-            nn.utils.clip_grad_value_(self.policy_parameters, 0.1)
-        if finite and torch.isfinite(gradnorm):
-            self.opt_pi.step()
-        self.wm.requires_grad_(True)
-        self.critic.requires_grad_(True)
+        gradnorm = kl = teacher_mse = state[0].new_zeros(())
+        mbrl_grad = teacher_grad = grad_cos = diagnostic = state[0].new_zeros(())
+        actor_updated = state[0].new_zeros(())
+        try:
+            # During adaptation only the imagined targets are no-grad; Critic fitting below is not.
+            with torch.set_grad_enabled(update_actor):
+                goal = initial_goal = self.motion.goal(frame, self.goal_frames)
+                if cfg.pi_kl_coef > 0:
+                    kl = self._policy_kl(self._replay_history(kl_historical),
+                        self.motion.goal(kl_start["f"], self.goal_frames), kl_start["xi"])
+                if cfg.teacher_mse_coef > 0:
+                    prediction = self.pi(self._replay_history(teacher_historical),
+                        self.motion.goal(teacher_start["f"], self.goal_frames),
+                        self.task.geometry_ids(teacher_start["xi"]))
+                    teacher_mse = (prediction.float() - teacher_start["teacher_action"].detach()).square().mean()
+                initial_state = state
+                states, actions, previous_actions, frames, goals = [], [], [], [], []
+                for _ in range(horizon):
+                    previous_actions.append(previous)
+                    state, previous, history, frame, goal = self.imag_step(
+                        state, history, frame, context, normalized_context, goal)
+                    states.append(state)
+                    actions.append(previous)
+                    frames.append(frame)
+                    goals.append(goal)
+                flatten = lambda values: torch.stack(values).flatten(0, 1)
+                all_states = tuple(flatten([step[i] for step in states]) for i in range(len(state)))
+                rewards, terminated = self.reward_term(all_states, flatten(frames), flatten(actions), flatten(previous_actions))
+                rewards, terminated = rewards.view(horizon, batch), terminated.view(horizon, batch)
+                survival = torch.cumprod(1 - terminated, 0)
+                alive_before = torch.cat((torch.ones(1, batch, device=self.device), survival[:-1]), 0)
+                discounts = cfg.gamma ** torch.arange(horizon, device=self.device, dtype=torch.float32).unsqueeze(-1)
+                returns = (discounts * alive_before * rewards).sum(0)
+                if not cfg.no_critic:
+                    returns = returns + cfg.gamma ** horizon * survival[-1] * self.critic(
+                        self._critic_input(state, frame, normalized_context, goal))
+                mbrl_loss = -returns.mean()
+                kl_loss = cfg.pi_kl_coef * kl
+                teacher_loss = cfg.teacher_mse_coef * teacher_mse
+                loss = mbrl_loss + kl_loss + teacher_loss
+                joint_step = self.current_learning_iteration - cfg.wm_only_iters - cfg.model_adapt_iters
+                if update_actor and cfg.teacher_mse_coef > 0 and 0 <= joint_step < cfg.teacher_grad_steps:
+                    gm = torch.autograd.grad(mbrl_loss, self.policy_parameters, retain_graph=True)
+                    gt = torch.autograd.grad(teacher_mse, self.policy_parameters, retain_graph=True)
+                    mbrl_grad = sum(g.float().square().sum() for g in gm).sqrt()
+                    teacher_grad = sum(g.float().square().sum() for g in gt).sqrt()
+                    grad_cos = sum((m.float() * t.float()).sum() for m, t in zip(gm, gt)) / (
+                        mbrl_grad * teacher_grad).clamp_min(1e-12)
+                    diagnostic = loss.new_ones(())
+                if update_actor:
+                    loss.backward()
+                    finite = distributed.average_gradients(self.opt_pi)
+                    gradnorm = nn.utils.clip_grad_norm_(self.policy_parameters, 1.0) if finite else loss.new_tensor(float('nan'))
+                    if finite:
+                        nn.utils.clip_grad_value_(self.policy_parameters, 0.1)
+                    if finite and torch.isfinite(gradnorm):
+                        self.opt_pi.step()
+                        actor_updated = loss.new_ones(())
+        finally:
+            self.wm.requires_grad_(True)
+            self.critic.requires_grad_(True)
         value_loss = torch.zeros((), device=self.device)
         if not cfg.no_critic:
             value_loss = self._critic_update(start, initial_state, initial_goal, states, frames, goals,
                                              normalized_context, rewards.detach(), terminated.detach())
         imagined_reward = (alive_before * rewards).detach().sum(0).mean() / horizon / self.task.max_step_reward
-        return (loss.detach(), value_loss.detach(), imagined_reward, gradnorm.detach(), survival[-1].mean().detach(),
-                mbrl_loss.detach(), kl.detach(), kl_loss.detach())
+        return tuple(value.detach() for value in (
+            loss, value_loss, imagined_reward, gradnorm, survival[-1].mean(), mbrl_loss, kl, kl_loss,
+            teacher_mse, teacher_loss, mbrl_grad, teacher_grad, grad_cos, diagnostic,
+            actor_updated))
 
     def _critic_update(self, start, initial_state, initial_goal, states, frames, goals, context, rewards, terminated):
         horizon, batch = self.cfg.horizon, self.cfg.pi_batch
@@ -358,7 +444,9 @@ class SuperMimicRunner:
     @staticmethod
     def _new_stats():
         names = ("wm_loss", "wm_err8", "pi_loss", "v_loss", "imag_rew", "pi_gradnorm", "imag_survival",
-                 "pi_mbrl_loss", "pi_kl", "pi_kl_loss", "sim_rew", "sim_invalid", "ep_len", "ep_ret_norm",
+                 "pi_mbrl_loss", "pi_kl", "pi_kl_loss", "pi_teacher_mse", "pi_teacher_loss",
+                 "pi_mbrl_gradnorm", "pi_teacher_gradnorm", "pi_teacher_gradcos", "pi_grad_diagnostic",
+                 "actor_updated", "sim_rew", "sim_invalid", "ep_len", "ep_ret_norm",
                  "terminated", "done")
         return {name: [] for name in names}
 
@@ -382,9 +470,16 @@ class SuperMimicRunner:
         if self.cfg.pi_kl_coef > 0 and self.pi_reference is None:
             raise ValueError("KL requires student_checkpoint/teacher_checkpoint initialization or a checkpoint "
                              "with its frozen DAgger reference; no current-Actor fallback is allowed")
+        if self.cfg.teacher_mse_coef > 0 and self.pi_teacher is None:
+            raise ValueError("Teacher-MSE requires student initialization or a checkpoint with a saved teacher")
         self.replay_env = self.make_replay_env()
         self.buffer = ReplayBuffer(self.cfg.buffer_steps, self.replay_env.N, self.device,
-                                   state_dim=self.dims.state, action_dim=self.dims.action, context_dim=self.dims.context)
+                                   state_dim=self.dims.state, action_dim=self.dims.action, context_dim=self.dims.context,
+                                   teacher_observation_dim=self.dims.observation if self.cfg.teacher_mse_coef > 0 else 0)
+        if self.cfg.teacher_mse_coef > 0:
+            # Replay/history are not checkpointed. Begin fresh episodes together on resume.
+            self.replay_env.reset()
+            self._teacher_history = None
         self.pi.train()
         self._open_logging()
         self._clock_start = time.monotonic() - self.wall_time
@@ -412,9 +507,12 @@ class SuperMimicRunner:
                 stats["wm_loss"].append(model_loss)
                 stats["wm_err8"].append(last_error)
                 if iteration >= self.cfg.wm_only_iters:
-                    results = self.policy_update()
+                    results = self.policy_update(
+                        update_actor=iteration >= self.cfg.wm_only_iters + self.cfg.model_adapt_iters)
                     for name, value in zip(("pi_loss", "v_loss", "imag_rew", "pi_gradnorm", "imag_survival",
-                                            "pi_mbrl_loss", "pi_kl", "pi_kl_loss"), results):
+                                            "pi_mbrl_loss", "pi_kl", "pi_kl_loss", "pi_teacher_mse", "pi_teacher_loss",
+                                            "pi_mbrl_gradnorm", "pi_teacher_gradnorm", "pi_teacher_gradcos",
+                                            "pi_grad_diagnostic", "actor_updated"), results):
                         stats[name].append(value)
                 self.current_learning_iteration = iteration + 1
                 self.wall_time = time.monotonic() - self._clock_start
@@ -457,6 +555,12 @@ class SuperMimicRunner:
                 "kind": "initial_dagger_actor", "policy": self.pi_reference.state_dict(),
                 "source": self.student_initialization["student"],
             }
+        if self.pi_teacher is not None:
+            checkpoint["pi_teacher"] = {
+                "kind": "privileged_teacher", "policy": self.pi_teacher.state_dict(),
+                "task": self.teacher_metadata, "policy_config": self.policy_config,
+                "source": self.student_initialization["teacher"],
+            }
         if self.geometry_bank is not None:
             checkpoint["geometry_bank"] = self.geometry_bank.to_dict()
         checkpoint.update(self.checkpoint_extras())
@@ -481,7 +585,18 @@ class SuperMimicRunner:
         location = "cpu" if actor_only else (map_location or "cpu")
         checkpoint = torch.load(path, map_location=location, weights_only=False)
         reference = checkpoint.get("pi_reference")
+        teacher = checkpoint.get("pi_teacher")
         if not actor_only:
+            if self.cfg.teacher_mse_coef > 0 and teacher is None:
+                raise ValueError("Teacher-MSE resume requires a saved frozen teacher; start from student_checkpoint")
+            if teacher is not None:
+                source = (checkpoint.get("student_initialization") or {}).get("teacher")
+                if (not isinstance(teacher, dict) or teacher.get("kind") != "privileged_teacher"
+                        or source is None or teacher.get("source") != source):
+                    raise ValueError("Frozen teacher provenance does not match student initialization")
+                for key in ("model_adapt_iters", "wm_only_iters", "freeze_actor_normalizers"):
+                    if checkpoint.get("train_cfg", {}).get(key) != getattr(self.cfg, key):
+                        raise ValueError(f"Teacher-MSE resume must preserve {key}")
             if self.cfg.pi_kl_coef > 0 and reference is None:
                 raise ValueError("KL-enabled resume requires a saved frozen DAgger reference; "
                                  "start a new run from student_checkpoint and teacher_checkpoint")
@@ -531,8 +646,11 @@ class SuperMimicRunner:
         self.student_initialization = checkpoint.get("student_initialization")
         if not actor_only:
             self.pi_reference = None
+            self.pi_teacher = self.teacher_metadata = self._teacher_history = None
             if reference is not None:
                 self._set_policy_reference(reference["policy"])
+            if teacher is not None:
+                self._set_teacher(teacher["policy"], teacher["task"], teacher["policy_config"])
         self._checkpoint_loaded = True
         return checkpoint.get("infos")
 
@@ -595,6 +713,8 @@ class SuperMimicRunner:
                         raise ValueError(f"Invalid {label} normalizer: {name}")
             provenance["student"]["metrics"] = student.get("metrics")
             provenance["continued_training"] = ["actor", "world_model", "critic"]
+            if self.cfg.teacher_mse_coef > 0:
+                self._set_teacher(teacher.get("pi"), teacher["task"], teacher["policy_config"])
         distributed.assert_same(provenance, "student and teacher initialization checkpoints")
         for _, module, weights in modules:
             module.load_state_dict(weights, strict=True)
@@ -751,4 +871,6 @@ class SuperMimicRunner:
               f"invalid {row['sim_invalid']:.4%} "
               f"ep_len {row['ep_len']:.1f} ep_ret {row['ep_ret_norm']:.3f} | {rate:.2f} it/s | "
               f"lr(wm/v) {lr:.2e} lr(pi) {metrics['pi_lr']:.2e} | "
-              f"KL {row['pi_kl']:.4f} penalty {row['pi_kl_loss']:.4f}", flush=True)
+              f"KL {row['pi_kl']:.4f} penalty {row['pi_kl_loss']:.4f} | "
+              f"teacher MSE {row['pi_teacher_mse']:.5f} loss {row['pi_teacher_loss']:.4f} "
+              f"actor_updated {row['actor_updated']:.0f}", flush=True)

@@ -215,3 +215,24 @@ Actor每帧仍只有本体93维及可选counts112/validity112，即93或317维�
 完整恢复训练状态及原始冻结参考，Replay重新填充；无触觉配置仍从原DAgger起点新建训练。
 `tools/play_tactile.py` 同时支持蒸馏学生与新的RL checkpoint。
 CUHK路径覆盖及Slurm命令见[背部开门工作流](../../../docs/open-door-workflow.md#蒸馏学生继续-supermimic-mbrl)。
+
+## 持续 teacher-MSE 的独立实验
+
+[`open_door_student_mbrl_teacher.json`](../../../configs/open_door_student_mbrl_teacher.json)
+从原触觉DAgger model16与teacher7800新建训练：先填充128步Replay，前300轮仅更新WM/Critic，
+随后1000轮联合优化 `pi_mbrl_loss + 5 * pi_teacher_mse`。Actor统计全程冻结，student-KL关闭；
+Actor初始LR2e-5，WM/Critic初始LR2e-4，每100轮保存。
+
+teacher在执行前用同一份实际学生本体/触觉历史加门状态标注，student始终驱动环境。
+Replay增加实际观测帧和teacher动作，监督采样覆盖末段并过滤无效/缺历史记录。
+首版要求两者触觉契约一致。冻结teacher随完整checkpoint保存，resume无需原模型文件，
+阶段按累计iteration继续；Replay重填，不能逐步复现不中断训练。
+
+```bash
+.venv/bin/python -m supermimic.scripts.train_open_door --config configs/open_door_student_mbrl_teacher.json --check
+.venv/bin/python -m supermimic.scripts.train_open_door --config configs/open_door_student_mbrl_teacher.json
+```
+
+该设计借鉴[SUGARv2](https://arxiv.org/abs/2611.09266)的持续动作监督，将PPO改为MBRL属于工程适配。
+完整参数、梯度诊断、恢复契约、CUHK同步后启动命令和本地评测约定见
+[训练工作流](../../../docs/open-door-workflow.md#持续-teacher-mse-的学生-mbrl)。

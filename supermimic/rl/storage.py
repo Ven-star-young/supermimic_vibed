@@ -22,8 +22,14 @@ def replay_fields(state_dim: int, action_dim: int, context_dim: int) -> dict:
 
 class ReplayBuffer:
     def __init__(self, T: int, N: int, device: str, *, state_dim: int = 71,
-                 action_dim: int = 29, context_dim: int = 33):
+                 action_dim: int = 29, context_dim: int = 33, teacher_observation_dim: int = 0):
+        if teacher_observation_dim < 0:
+            raise ValueError("teacher_observation_dim must be nonnegative")
         self.fields = replay_fields(state_dim, action_dim, context_dim)
+        if teacher_observation_dim > 0:
+            # Store the student's actual observation alongside its teacher label.
+            self.fields.update(observation=(teacher_observation_dim, torch.float32),
+                               teacher_action=(action_dim, torch.float32))
         self.T, self.N, self.device = T, N, device
         self.data = {}
         for k, (shape, dt) in self.fields.items():
@@ -32,6 +38,8 @@ class ReplayBuffer:
         self.ptr, self.size = 0, 0
 
     def add(self, tr: dict):
+        if "teacher_action" in self.fields and ("observation" not in tr or "teacher_action" not in tr):
+            raise KeyError("Teacher replay requires observation and teacher_action")
         for k in self.fields:
             # Ordinary legacy transition producers have no numerical failures.
             self.data[k][self.ptr] = tr.get(k, True) if k == "valid" else tr[k]
@@ -69,4 +77,9 @@ class ReplayBuffer:
         henv = env.unsqueeze(-1).expand_as(hrows)
         start = {k: self.data[k][row, env] for k in ("s", "a_prev", "xi", "f", "valid")}
         hist_d = {k: self.data[k][hrows, henv] for k in ("s", "a_prev", "xi", "f")}
+        if "teacher_action" in self.fields:
+            start["teacher_action"] = self.data["teacher_action"][row, env]
+            hist_d["observation"] = self.data["observation"][hrows, henv]
+            start["valid"] &= age >= ep_step.clamp(max=hist - 1)
+            start["valid"] &= self.data["valid"][hrows, henv].all(-1)
         return start, hist_d

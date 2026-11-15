@@ -44,6 +44,27 @@ class OpenDoorTask(TrackingTask):
     def make_critic(self, goal_frames):
         return Critic(goal_frames)
 
+    def make_teacher_policy(self, metadata, history_length, goal_frames):
+        """Build the full-state teacher for a student with the same tactile mapping."""
+        if self.name != "g1_open_door" or not self.mdp.proprio_only:
+            raise ValueError("Teacher supervision requires a back-opening proprio student")
+        expected = self.checkpoint_metadata()
+        expected.pop("actor_observation_mode", None)
+        expected["actor_observation"] = "robot93,door_hinge_relative3,door_normal3,sin_cos_theta,omega"
+        expected["dimensions"]["observation"] += 9
+        if self.mdp.tactile is not None:
+            expected["actor_observation"] += ",tactile_counts112,tactile_valid112"
+        if json.dumps(metadata, sort_keys=True) != json.dumps(expected, sort_keys=True):
+            raise ValueError("Teacher full-state/task/tactile contract differs from the student task")
+        return Policy(history_length, goal_frames, use_tactile=self.mdp.tactile is not None)
+
+    def teacher_observation(self, state, context, student_frame):
+        """Share the student's actual noisy sensors; insert only privileged door features."""
+        if student_frame.shape[-1] != self.dimensions.observation or not self.mdp.proprio_only:
+            raise ValueError("Expected a proprio student observation frame")
+        return torch.cat((student_frame[..., :93], self.dynamics.door_features(state, context),
+                          student_frame[..., 93:]), dim=-1)
+
     def checkpoint_metadata(self):
         metadata = {
             "name": self.name, "schema_version": 2,
