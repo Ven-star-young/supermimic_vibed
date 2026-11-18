@@ -1,0 +1,49 @@
+"""Export a sitting depth student with its CNN and normalization inside ONNX."""
+import argparse
+import json
+from pathlib import Path
+
+import torch
+
+from supermimic.assets.g1.g1_constants import G1_JOINT_NAMES, action_scale, default_joint_pos_list
+from supermimic.camera import HDMI_CAMERA_METADATA
+from supermimic.distillation.sitting.models import load_sitting_student
+
+
+def export(checkpoint_path, output):
+    import onnx
+
+    output = Path(output)
+    if output.exists():
+        raise FileExistsError(f"Choose a new ONNX output: {output}")
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    policy = load_sitting_student(checkpoint)
+    contract = dict(
+        schema_version=1, task="g1_sitting", history_length=10, proprio_dim=93,
+        goal_dim=730, action_dim=29, depth_shape=[1, 120, 160], depth_latent_dim=64,
+        control_dt=.02, physics_dt=.005, history_order="oldest_to_newest",
+        joint_names=G1_JOINT_NAMES, default_joint_pos=default_joint_pos_list(),
+        action_scale=[action_scale(name) for name in G1_JOINT_NAMES], camera=HDMI_CAMERA_METADATA,
+    )
+    sample = (torch.zeros(1, 10, 93), torch.zeros(1, 730), torch.ones(1, 1, 120, 160))
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with torch.inference_mode():
+        torch.onnx.export(policy, sample, str(output), dynamo=False, opset_version=17,
+                          input_names=["proprio_history", "goal", "depth"], output_names=["actions"])
+    model = onnx.load(output)
+    onnx.helper.set_model_props(model, {"sitting_depth_contract": json.dumps(contract, sort_keys=True)})
+    onnx.checker.check_model(model)
+    onnx.save(model, output)
+    print(f"Saved {output}: proprio_history[1,10,93], goal[1,730], depth[1,1,120,160] -> actions[1,29]")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--checkpoint", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args()
+    export(args.checkpoint, args.output)
+
+
+if __name__ == "__main__":
+    main()

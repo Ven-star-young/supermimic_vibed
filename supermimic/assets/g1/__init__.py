@@ -1,5 +1,5 @@
 """Unitree G1 entity and differentiable kinematics."""
-from .g1_constants import make_g1_robot_cfg, make_g1_spec
+from .g1_constants import HDMI_CAMERA_NAME, add_hdmi_camera, make_g1_robot_cfg, make_g1_spec
 from .kinematics import G1Kinematics
 
-__all__ = ["make_g1_robot_cfg", "make_g1_spec", "G1Kinematics"]
+__all__ = ["HDMI_CAMERA_NAME", "add_hdmi_camera", "make_g1_robot_cfg", "make_g1_spec", "G1Kinematics"]

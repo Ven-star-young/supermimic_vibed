@@ -34,6 +34,7 @@ Original implementation: **Chong Zhang** (ETH Zurich). Code license: [MIT](LICEN
 - [数据源转换、纯运动学回放、碰撞资产](docs/motion-and-assets.md)
 - [G1 触觉点、通道与 mjlab 传感器](docs/tactile.md)
 - [OpenDoor 本体＋10帧触觉蒸馏](supermimic/distillation/open_door/README.md)
+- [Sitting 本体＋单帧深度视觉蒸馏](supermimic/distillation/sitting/README.md)
 - [实现契约](CONTEXT.md)
 
 ```text

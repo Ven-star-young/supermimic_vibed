@@ -17,6 +17,18 @@ from .. import DATA_DIR
 URDF_PATH = DATA_DIR / "g1_description" / "g1_29dof_rev_1_0.urdf"
 MJCF_PATH = DATA_DIR / "g1_description" / "g1_29dof.xml"
 
+HDMI_CAMERA_NAME = "d435_camera"
+HDMI_CAMERA_METADATA = {
+    "width": 160, "height": 120, "update_period": 0.02,
+    "depth_units": "m", "depth_type": "distance_to_image_plane",
+    "min_depth": 0.1, "max_depth": 4.0, "normalization": "none",
+    "mount_body": "d435_link", "position": [0.0, 0.0, 0.0],
+    "quaternion_wxyz": [0.5, 0.5, -0.5, -0.5],
+    "sensor_size": [20.0, 15.0], "focal_length": [7.6, 7.6],
+    "invalid_depth": "nonfinite_or_nonpositive_to_max",
+    "noise_std": 0.0, "episode_bias": 0.0, "delay_seconds": 0.0,
+}
+
 ARMATURE_5020 = 0.003609725
 ARMATURE_7520_14 = 0.010177520
 ARMATURE_7520_22 = 0.025101925
@@ -166,6 +178,28 @@ def _add_interaction_collisions(spec: mujoco.MjSpec) -> None:
         )
 
 
+def add_hdmi_camera(spec: mujoco.MjSpec) -> mujoco.MjsCamera:
+    """Add the HDMI head camera to the shared G1 asset specification.
+
+    The d435 link already contains the HDMI torso-relative mount pose.  The
+    child camera applies the ROS optical-frame conversion (MuJoCo looks along
+    local -Z, ROS optical forward is +Z) and keeps the published HDMI pinhole
+    intrinsics available to every scene built from this asset.
+    """
+    existing = spec.camera(HDMI_CAMERA_NAME)
+    if existing is not None:
+        return existing
+    cfg = HDMI_CAMERA_METADATA
+    camera = spec.body(cfg["mount_body"]).add_camera()
+    camera.name = HDMI_CAMERA_NAME
+    camera.pos[:] = cfg["position"]
+    camera.quat[:] = cfg["quaternion_wxyz"]
+    camera.resolution[:] = (cfg["width"], cfg["height"])
+    camera.sensor_size[:] = cfg["sensor_size"]
+    camera.focal_length[:] = cfg["focal_length"]
+    return camera
+
+
 def make_g1_spec(*, interaction_collisions: bool = False) -> mujoco.MjSpec:
     """Load the original retargeting robot directly as MJCF, without USD.
 
@@ -181,6 +215,7 @@ def make_g1_spec(*, interaction_collisions: bool = False) -> mujoco.MjSpec:
             "(or python tools/urdf_to_mjcf.py if the original URDF and meshes are present)."
         )
     spec = mujoco.MjSpec.from_file(str(MJCF_PATH))
+    add_hdmi_camera(spec)
     # The EntityCfg below owns all drives, including their armature and force caps.
     for actuator in list(spec.actuators):
         spec.delete(actuator)

@@ -83,6 +83,8 @@ class PolicyBrowser:
             command += ["--data-root", str(args.data_root.resolve())]
         if args.max_steps is not None:
             command += ["--max-steps", str(args.max_steps)]
+        if getattr(args, "depth_input", "current") != "current":
+            command += ["--depth-input", args.depth_input]
         if getattr(args, "metrics_json", None):
             command += ["--metrics-json", str(args.metrics_json.resolve())]
         return command

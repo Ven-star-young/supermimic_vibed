@@ -108,6 +108,8 @@ def build_parser():
     parser.add_argument("--metrics-json", type=Path, help="Stable-contact defaults and optional per-reference overrides")
     parser.add_argument("--browse", action="store_true", help="Open local reference picker and live policy viewer")
     parser.add_argument("--report", type=Path, help="Existing evaluation JSON to display in the browser")
+    parser.add_argument("--depth-input", choices=("current", "constant"), default="current",
+                        help="Depth students: current camera or a constant 4 m image for visual ablation")
     return parser
 
 
@@ -195,7 +197,11 @@ def make_deployment_cfg(checkpoint, reference, args):
             setattr(command, field, replace(getattr(command, field), **task[key]))
     if "control_dt" in task and not math.isclose(task["control_dt"], cfg.decimation * cfg.sim.mujoco.timestep):
         raise ValueError("Checkpoint control timestep differs from this sitting environment")
-    return replace(cfg, commands={"motion": command})
+    cfg = replace(cfg, commands={"motion": command})
+    if checkpoint.get("kind") == "sitting_depth_student":
+        from supermimic.camera import configure_depth_camera
+        configure_depth_camera(cfg)
+    return cfg
 
 
 def classify_outcome(*, failed, reference_end, timed_out=False, step_limit=False):
@@ -367,13 +373,32 @@ def run_reference(checkpoint, manifest, reference, args, *, on_record=None, metr
     try:
         env = DeploymentEnv(native, args.episodes, args.max_steps,
             seeds=getattr(args, "trial_seeds", None), metrics_cfg=metrics_cfg, on_record=on_record)
-        train_cfg = checkpoint["train_cfg"] | dict(amp="none", no_compile=True)
-        runner = SuperMimicRunner(env, train_cfg, device=args.device)
-        # Explicit frozen-policy transfer, including a new chair's local geometry
-        # bank. Full training resume would incorrectly require identical scene IDs.
-        load_actor(runner, checkpoint, manifest)
-        before = policy_digest(runner.pi)
-        policy = runner.get_inference_policy()
+        runner = None
+        if checkpoint.get("kind") == "sitting_depth_student":
+            from supermimic.camera import depth_observation
+            from supermimic.distillation.sitting.models import load_sitting_student
+            native.command_manager.get_term("motion").task.validate_checkpoint(checkpoint)
+            exposure = set(experiment_metadata(checkpoint).get("visited_train_shapes", []))
+            if not exposure <= {group["shape_key"] for group in manifest["train"]}:
+                raise ValueError("Student training exposure includes a non-training chair")
+            actor = load_sitting_student(checkpoint, device=args.device)
+
+            def policy(observations):
+                depth = depth_observation(native)
+                if args.depth_input == "constant":
+                    depth = torch.full_like(depth, 4.0)
+                history = observations["policy_history"].reshape(native.num_envs, 10, 102)
+                return actor(history[..., :93], observations["goal"], depth)
+        else:
+            if args.depth_input != "current":
+                raise ValueError("--depth-input applies only to sitting depth students")
+            train_cfg = checkpoint["train_cfg"] | dict(amp="none", no_compile=True)
+            runner = SuperMimicRunner(env, train_cfg, device=args.device)
+            # Keep the destination scene's geometry IDs when loading an expert.
+            load_actor(runner, checkpoint, manifest)
+            actor = runner.pi
+            policy = runner.get_inference_policy()
+        before = policy_digest(actor)
         if args.viewer == "none":
             with torch.inference_mode():
                 while not env.finished:
@@ -409,9 +434,10 @@ def run_reference(checkpoint, manifest, reference, args, *, on_record=None, metr
                     server.stop()
         if not env.finished:
             env.interrupt("viewer_closed")
-        if policy_digest(runner.pi) != before:
+        if policy_digest(actor) != before:
             raise RuntimeError("Policy weights or normalization changed during deployment")
-        assert runner.wm is runner.critic is runner.buffer is None
+        if runner is not None:
+            assert runner.wm is runner.critic is runner.buffer is None
         return dict(**identity, frozen_policy=True, episodes=env.records)
     except BaseException as exc:
         if env is not None:
@@ -540,6 +566,7 @@ def main(argv=None):
             perturbation=dict(type="initial_robot_state_only", noise_scale=args.noise_scale,
                               uniform_half_widths=asdict(ReferenceResetCfg())),
             metrics=configuration, control_hz=50, physics_hz=200,
+            depth_input=args.depth_input if checkpoint.get("kind") == "sitting_depth_student" else None,
             evaluation_physics=dict(chair_mass_kg=10., robot_chair_friction=1.),
             max_steps=args.max_steps, infinite_playback=args.episodes == 0,
             success_definition="Full reference from frame 0, no failure/timeout/interruption before reference completion",
