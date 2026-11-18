@@ -235,10 +235,10 @@ WM/Critic从同一 `teacher7800` 初始化并继续更新，同时额外加载�
 
 | 配置 | 当前值与含义 |
 |---|---|
-| `iterations` | 1300：前300轮模型适配，之后1000轮联合更新 |
+| `iterations` | 10000：前300轮模型适配，之后9700轮联合更新 |
 | `warmup_steps` / `wm_only_iters` | 128步真实Replay填充 / 0轮单独WM训练 |
 | `model_adapt_iters` | 300：第1–300轮Actor不执行optimizer step，Actor统计不更新；WM和Critic更新 |
-| `freeze_actor_normalizers` | `true`：第301–1300轮也冻结继承的Actor obs/goal统计 |
+| `freeze_actor_normalizers` | `true`：第301–10000轮也冻结继承的Actor obs/goal统计 |
 | `teacher_mse_coef` / `pi_kl_coef` | 固定5.0 / 0.0 |
 | `teacher_grad_steps` | 前10次联合更新分别计算原始MBRL loss和未加权teacher-MSE的梯度诊断 |
 | `pi_lr` / `lr` | Actor初始2e-5 / WM、Critic初始2e-4，沿现有累计迭代调度衰减 |

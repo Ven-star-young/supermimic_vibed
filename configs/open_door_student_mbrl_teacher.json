@@ -1,7 +1,7 @@
 {
   "training": {
     "num_envs": 2048,
-    "iterations": 1300,
+    "iterations": 10000,
     "gpu_ids": [0],
     "log_root": "logs/rsl_rl",
     "run_name": "back_student_mbrl_tactile_teacher_mse5_adapt300",

@@ -320,6 +320,12 @@ class SuperMimicRunner:
 
     def policy_update(self, *, update_actor=True):
         cfg, batch, horizon = self.cfg, self.cfg.pi_batch, self.cfg.horizon
+        joint_step = self.current_learning_iteration - cfg.wm_only_iters - cfg.model_adapt_iters
+        diagnose_gradients = update_actor and cfg.teacher_mse_coef > 0 and 0 <= joint_step < cfg.teacher_grad_steps
+        # Separate diagnostic gradients retain the graph. AOT donated buffers
+        # require a single backward, so keep only these few policy rollouts eager.
+        imag_step = self._imag_step if diagnose_gradients else self.imag_step
+        reward_term = self._reward_term if diagnose_gradients else self.reward_term
         sampling_error = None
         try:
             start, historical = self._sample_valid_starts()
@@ -359,7 +365,7 @@ class SuperMimicRunner:
                 states, actions, previous_actions, frames, goals = [], [], [], [], []
                 for _ in range(horizon):
                     previous_actions.append(previous)
-                    state, previous, history, frame, goal = self.imag_step(
+                    state, previous, history, frame, goal = imag_step(
                         state, history, frame, context, normalized_context, goal)
                     states.append(state)
                     actions.append(previous)
@@ -367,7 +373,7 @@ class SuperMimicRunner:
                     goals.append(goal)
                 flatten = lambda values: torch.stack(values).flatten(0, 1)
                 all_states = tuple(flatten([step[i] for step in states]) for i in range(len(state)))
-                rewards, terminated = self.reward_term(all_states, flatten(frames), flatten(actions), flatten(previous_actions))
+                rewards, terminated = reward_term(all_states, flatten(frames), flatten(actions), flatten(previous_actions))
                 rewards, terminated = rewards.view(horizon, batch), terminated.view(horizon, batch)
                 survival = torch.cumprod(1 - terminated, 0)
                 alive_before = torch.cat((torch.ones(1, batch, device=self.device), survival[:-1]), 0)
@@ -380,8 +386,7 @@ class SuperMimicRunner:
                 kl_loss = cfg.pi_kl_coef * kl
                 teacher_loss = cfg.teacher_mse_coef * teacher_mse
                 loss = mbrl_loss + kl_loss + teacher_loss
-                joint_step = self.current_learning_iteration - cfg.wm_only_iters - cfg.model_adapt_iters
-                if update_actor and cfg.teacher_mse_coef > 0 and 0 <= joint_step < cfg.teacher_grad_steps:
+                if diagnose_gradients:
                     gm = torch.autograd.grad(mbrl_loss, self.policy_parameters, retain_graph=True)
                     gt = torch.autograd.grad(teacher_mse, self.policy_parameters, retain_graph=True)
                     mbrl_grad = sum(g.float().square().sum() for g in gm).sqrt()

@@ -220,7 +220,7 @@ CUHK路径覆盖及Slurm命令见[背部开门工作流](../../../docs/open-door
 
 [`open_door_student_mbrl_teacher.json`](../../../configs/open_door_student_mbrl_teacher.json)
 从原触觉DAgger model16与teacher7800新建训练：先填充128步Replay，前300轮仅更新WM/Critic，
-随后1000轮联合优化 `pi_mbrl_loss + 5 * pi_teacher_mse`。Actor统计全程冻结，student-KL关闭；
+随后9700轮联合优化 `pi_mbrl_loss + 5 * pi_teacher_mse`，共10000轮。Actor统计全程冻结，student-KL关闭；
 Actor初始LR2e-5，WM/Critic初始LR2e-4，每100轮保存。
 
 teacher在执行前用同一份实际学生本体/触觉历史加门状态标注，student始终驱动环境。
