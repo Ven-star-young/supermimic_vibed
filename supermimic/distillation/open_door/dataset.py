@@ -1,4 +1,4 @@
-"""CPU replay storage for OpenDoor proprioception and tactile DAgger samples."""
+"""CPU replay storage for OpenDoor proprioception, tactile and depth samples."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import torch
 
 from .models import ACTION_DIM, GOAL_DIM, HISTORY_LENGTH, PROPRIO_DIM, TACTILE_CHANNELS
+from ..sitting.models import DEPTH_HEIGHT, DEPTH_WIDTH
 
 
 @dataclass
@@ -17,6 +18,7 @@ class DaggerBatch:
     done: torch.Tensor
     tactile_history: torch.Tensor
     tactile_valid: torch.Tensor
+    depth: torch.Tensor | None = None
 
     def to(self, device: torch.device | str) -> "DaggerBatch":
         return DaggerBatch(
@@ -26,19 +28,21 @@ class DaggerBatch:
             self.done.to(device),
             self.tactile_history.to(device),
             self.tactile_valid.to(device),
+            None if self.depth is None else self.depth.to(
+                device=device, dtype=torch.float32).clamp(0.1, 4.0),
         )
 
 
 class OpenDoorDaggerDataset:
     """Bounded ring buffer; samples are copied to CPU on insertion.
 
-    Storing the already assembled history makes the first version independent
-    of camera code and prevents an episode reset from changing old labels.
+    Histories and optional metric depth are pre-action snapshots, so an episode
+    reset cannot change old labels. Depth is stored as float16 like Sitting.
     """
 
     def __init__(self, capacity: int = 200_000, *, history_length: int = HISTORY_LENGTH,
                  proprio_dim: int = PROPRIO_DIM, goal_dim: int = GOAL_DIM,
-                 action_dim: int = ACTION_DIM):
+                 action_dim: int = ACTION_DIM, use_depth: bool = False):
         if capacity < 1:
             raise ValueError("capacity must be positive")
         self.capacity = capacity
@@ -46,6 +50,9 @@ class OpenDoorDaggerDataset:
         self.proprio_dim = proprio_dim
         self.goal_dim = goal_dim
         self.action_dim = action_dim
+        if not isinstance(use_depth, bool):
+            raise ValueError("use_depth must be boolean")
+        self.use_depth = use_depth
         self._size = 0
         self._next = 0
         self._proprio = torch.empty(0)
@@ -54,6 +61,7 @@ class OpenDoorDaggerDataset:
         self._done = torch.empty(0, dtype=torch.bool)
         self._tactile = torch.empty(0, dtype=torch.uint8)
         self._tactile_valid = torch.empty(0, dtype=torch.bool)
+        self._depth = torch.empty(0, dtype=torch.float16)
 
     def __len__(self) -> int:
         return self._size
@@ -73,10 +81,14 @@ class OpenDoorDaggerDataset:
                                     dtype=torch.uint8, device="cpu")
         self._tactile_valid = torch.empty(self.capacity, self.history_length, TACTILE_CHANNELS,
                                           dtype=torch.bool, device="cpu")
+        if self.use_depth:
+            self._depth = torch.empty(self.capacity, 1, DEPTH_HEIGHT, DEPTH_WIDTH,
+                                      dtype=torch.float16, device="cpu")
 
     def add(self, proprio_history: torch.Tensor, goal: torch.Tensor,
             expert_action: torch.Tensor, done: torch.Tensor | None = None, *,
-            tactile_history: torch.Tensor, tactile_valid: torch.Tensor) -> None:
+            tactile_history: torch.Tensor, tactile_valid: torch.Tensor,
+            depth: torch.Tensor | None = None) -> None:
         for name, value in (("proprio_history", proprio_history), ("goal", goal),
                             ("expert_action", expert_action)):
             if not isinstance(value, torch.Tensor) or not value.is_floating_point():
@@ -93,6 +105,13 @@ class OpenDoorDaggerDataset:
         tactile_shape = (batch, self.history_length, TACTILE_CHANNELS)
         if tactile_history.shape != tactile_shape or tactile_valid.shape != tactile_shape:
             raise ValueError(f"tactile_history and tactile_valid must have shape {tactile_shape}")
+        if self.use_depth:
+            if not isinstance(depth, torch.Tensor) or not depth.is_floating_point():
+                raise TypeError("Depth dataset requires a floating-point depth tensor")
+            if depth.shape != (batch, 1, DEPTH_HEIGHT, DEPTH_WIDTH):
+                raise ValueError(f"depth must have shape [B,1,{DEPTH_HEIGHT},{DEPTH_WIDTH}]")
+        elif depth is not None:
+            raise ValueError("Dataset without depth does not accept depth")
         done = torch.zeros(batch, dtype=torch.bool, device=proprio_history.device) if done is None else done
         if not isinstance(done, torch.Tensor) or done.dtype != torch.bool:
             raise TypeError("done must have dtype torch.bool")
@@ -108,6 +127,8 @@ class OpenDoorDaggerDataset:
             goal, expert_action, done = goal[-self.capacity:], expert_action[-self.capacity:], done[-self.capacity:]
             tactile_history = tactile_history[-self.capacity:]
             tactile_valid = tactile_valid[-self.capacity:]
+            if depth is not None:
+                depth = depth[-self.capacity:]
             batch = self.capacity
         indices = (torch.arange(batch, device="cpu") + self._next) % self.capacity
         self._proprio[indices] = proprio_history.detach().float().cpu()
@@ -116,6 +137,8 @@ class OpenDoorDaggerDataset:
         self._done[indices] = done.detach().cpu()
         self._tactile[indices] = tactile_history.detach().cpu()
         self._tactile_valid[indices] = tactile_valid.detach().cpu()
+        if self.use_depth:
+            self._depth[indices] = depth.detach().to(device="cpu", dtype=torch.float16)
         self._next = int((self._next + batch) % self.capacity)
         self._size = min(self.capacity, self._size + batch)
 
@@ -129,8 +152,9 @@ class OpenDoorDaggerDataset:
         picks = torch.randint(len(indices), (batch_size,), device="cpu", generator=generator)
         indices = indices[picks]
         batch = DaggerBatch(self._proprio[indices], self._goal[indices], self._action[indices],
-                            self._done[indices], self._tactile[indices], self._tactile_valid[indices])
-        return batch if device is None else batch.to(device)
+                            self._done[indices], self._tactile[indices], self._tactile_valid[indices],
+                            self._depth[indices] if self.use_depth else None)
+        return batch.to("cpu" if device is None else device)
 
     def normalization_batches(self, batch_size: int):
         """Yield bounded CPU batches of only the two normalized input fields."""
@@ -149,5 +173,6 @@ class OpenDoorDaggerDataset:
         indices = self._valid_indices()
         batch = DaggerBatch(self._proprio[indices], self._goal[indices],
                             self._action[indices], self._done[indices],
-                            self._tactile[indices], self._tactile_valid[indices])
-        return batch if device is None else batch.to(device)
+                            self._tactile[indices], self._tactile_valid[indices],
+                            self._depth[indices] if self.use_depth else None)
+        return batch.to("cpu" if device is None else device)

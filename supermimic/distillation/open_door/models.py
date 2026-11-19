@@ -16,6 +16,7 @@ from ...rl.models import (
     run_mlp,
 )
 from ...tasks.g1_tracking.models import Policy as _BasePolicy
+from ..sitting.models import DEPTH_HEIGHT, DEPTH_WIDTH, DEPTH_LATENT_DIM, DepthEncoder
 
 
 HISTORY_LENGTH = 10
@@ -102,22 +103,27 @@ class TactileHistory:
 
 
 class OpenDoorStudentPolicy(_BasePolicy):
-    """OpenDoor goal/actor widths with a tactile latent replacing direct door state.
+    """OpenDoor student with optional tactile and depth latents instead of direct door state.
 
     Input:
         ``proprio_history``: ``[B, 10, 93]`` (or flattened ``[B, 930]``)
         ``goal``: ``[B, 750]``
-        ``tactile_history``, ``tactile_valid``: raw counts/bool ``[B, 10, 112]``
+        ``tactile_history``: raw counts ``[B, 10, 112]``.
+        ``tactile_valid``: preprocessing mask; a network feature only for legacy checkpoints.
+        ``depth``: current float32 metric depth ``[B,1,120,160]``, as in Sitting.
     Output:
         normalized 29-D joint action consumed by the existing action manager.
     """
 
     def __init__(self, history_length: int = HISTORY_LENGTH, goal_frames: int = HISTORY_LENGTH,
-                 *, use_tactile: bool = True):
+                 *, use_tactile: bool = True, tactile_include_valid: bool = True,
+                 use_depth: bool = False):
         if history_length != HISTORY_LENGTH:
             raise ValueError("The first OpenDoor student contract requires history_length=10")
         if not isinstance(use_tactile, bool):
             raise ValueError("use_tactile must be boolean")
+        if not isinstance(use_depth, bool):
+            raise ValueError("use_depth must be boolean")
         super().__init__(
             obs_dim=PROPRIO_DIM,
             goal_dim=75 * goal_frames,
@@ -125,10 +131,14 @@ class OpenDoorStudentPolicy(_BasePolicy):
             action_dim=ACTION_DIM,
         )
         self.use_tactile = use_tactile
+        self.use_depth = use_depth
         self.goal_initialized_from_teacher = False
-        self.tactile_encoder = TactileEncoder(history_length) if use_tactile else None
-        if use_tactile:
-            self.dec[0] = nn.Linear(self.dec[0].in_features + TACTILE_LATENT_DIM, self.dec[0].out_features)
+        self.tactile_encoder = (TactileEncoder(history_length, include_valid=tactile_include_valid)
+                                if use_tactile else None)
+        self.depth_encoder = DepthEncoder() if use_depth else None
+        extra = (TACTILE_LATENT_DIM if use_tactile else 0) + (DEPTH_LATENT_DIM if use_depth else 0)
+        if extra:
+            self.dec[0] = nn.Linear(self.dec[0].in_features + extra, self.dec[0].out_features)
 
     @torch.no_grad()
     def initialize_goal_from_expert(self, expert: nn.Module) -> None:
@@ -142,7 +152,8 @@ class OpenDoorStudentPolicy(_BasePolicy):
         self.goal_initialized_from_teacher = True
 
     def forward(self, proprio_history: torch.Tensor, goal: torch.Tensor,
-                tactile_history: torch.Tensor | None = None, tactile_valid: torch.Tensor | None = None):
+                tactile_history: torch.Tensor | None = None, tactile_valid: torch.Tensor | None = None,
+                *, depth: torch.Tensor | None = None):
         history = _as_history(
             proprio_history,
             frame_dim=PROPRIO_DIM,
@@ -157,9 +168,16 @@ class OpenDoorStudentPolicy(_BasePolicy):
         proprio = self.obs_norm(history).flatten(-2)
         features = [goal_latent, proprio]
         if self.use_tactile:
-            if tactile_history is None or tactile_valid is None or tactile_history.shape[0] != history.shape[0]:
-                raise ValueError("Tactile students require counts and validity for every observation")
+            if tactile_history is None or tactile_history.shape[0] != history.shape[0]:
+                raise ValueError("Tactile students require counts for every observation")
             features.append(self.tactile_encoder(tactile_history, tactile_valid))
+        if self.use_depth:
+            if (depth is None or depth.shape != (history.shape[0], 1, DEPTH_HEIGHT, DEPTH_WIDTH)
+                    or depth.dtype != torch.float32):
+                raise ValueError("Depth students require float32 metric depth [B,1,120,160]")
+            features.append(self.depth_encoder(depth))
+        elif depth is not None:
+            raise ValueError("Student configured without depth does not accept depth input")
         return run_mlp(self.dec, torch.cat(features, dim=-1))
 
 
@@ -210,3 +228,43 @@ def load_frozen_open_door_expert(path: str | Path, *, device: torch.device | str
     wrapper = FrozenOpenDoorExpert(expert)
     wrapper.load_checkpoint(checkpoint)
     return wrapper
+
+
+def load_open_door_student(checkpoint: dict[str, Any],
+                           *, device: torch.device | str = "cpu") -> OpenDoorStudentPolicy:
+    """Validate the tactile/depth input contract and load a frozen DAgger actor."""
+    from ...camera import HDMI_CAMERA_METADATA
+
+    saved = checkpoint.get("config", {})
+    use_tactile = saved.get("use_tactile", True)
+    use_depth = saved.get("use_depth", False)
+    include_valid = saved.get("tactile_include_valid", True)
+    if any(type(flag) is not bool for flag in (use_tactile, use_depth, include_valid)):
+        raise ValueError("Student modality settings must be boolean")
+    kind = ("open_door_tactile_depth_student" if use_tactile else "open_door_depth_student") if use_depth else (
+        "open_door_tactile_student" if use_tactile else "open_door_proprio_student")
+    counts_only = use_tactile and not include_valid
+    expected = {"history_length": 10, "goal_frames": 10, "proprio_dim": 93,
+                "tactile_channels": 112 if use_tactile else 0,
+                "tactile_latent_dim": 64 if use_tactile else 0, "action_dim": 29,
+                "history_order": "oldest_to_newest",
+                "tactile_units": "uint8_counts" if use_tactile else None}
+    if counts_only:
+        expected["tactile_include_valid"] = False
+    if use_depth:
+        expected.update(use_depth=True, goal_dim=GOAL_DIM,
+                        depth_shape=[1, DEPTH_HEIGHT, DEPTH_WIDTH], depth_latent_dim=DEPTH_LATENT_DIM,
+                        depth_units="metres", tactile_include_valid=include_valid if use_tactile else False)
+        if checkpoint.get("camera_metadata") != HDMI_CAMERA_METADATA:
+            raise ValueError("OpenDoor student camera metadata differs from the HDMI depth configuration")
+    elif checkpoint.get("camera_metadata") is not None:
+        raise ValueError("Student without depth must not contain camera metadata")
+    schema = 3 if use_depth else (2 if counts_only else 1)
+    if (checkpoint.get("kind") != kind or checkpoint.get("schema_version") != schema
+            or checkpoint.get("policy_config") != expected):
+        raise ValueError("Unsupported OpenDoor student input schema or modality configuration")
+    policy = OpenDoorStudentPolicy(use_tactile=use_tactile, use_depth=use_depth,
+                                   tactile_include_valid=include_valid).to(device)
+    policy.load_state_dict(checkpoint["student"], strict=True)
+    policy.goal_initialized_from_teacher = checkpoint.get("goal_encoder", {}).get("initialized_from_teacher", False)
+    return policy.eval().requires_grad_(False)

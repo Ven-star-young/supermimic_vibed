@@ -26,6 +26,9 @@ class OpenDoorDaggerConfig:
     motion_dir: str = "data/motions/open_door_prepared/video1_g1_door_video45_centered_asset.npz"
     num_envs: int = 16
     use_tactile: bool = True
+    use_depth: bool = False
+    # Legacy configs/checkpoints included validity as a learned input feature.
+    tactile_include_valid: bool = True
     initialize_goal_from_teacher: bool = False
     tactile_layout: str = "original_outer"
     tactile_contact_distance_m: float = 0.004
@@ -41,6 +44,7 @@ class OpenDoorDaggerConfig:
     updates_per_round: int = 4
     save_every: int = 1
     capacity: int = 200_000
+    max_dataset_gib: float = 16.0
     batch_size: int = 1024
     train_epochs: int = 4
     learning_rate: float = 2e-4
@@ -58,6 +62,10 @@ class OpenDoorDaggerConfig:
             raise ValueError("num_envs must be positive")
         if not isinstance(self.use_tactile, bool):
             raise ValueError("use_tactile must be boolean")
+        if not isinstance(self.use_depth, bool):
+            raise ValueError("use_depth must be boolean")
+        if not isinstance(self.tactile_include_valid, bool):
+            raise ValueError("tactile_include_valid must be boolean")
         if not isinstance(self.initialize_goal_from_teacher, bool):
             raise ValueError("initialize_goal_from_teacher must be boolean")
         if self.tactile_layout not in ("original_outer", "inner_arms_v1"):
@@ -79,6 +87,18 @@ class OpenDoorDaggerConfig:
             raise ValueError("beta values must lie in [0, 1]")
         if self.beta_decay_rounds < 1:
             raise ValueError("beta_decay_rounds must be positive")
+        if not math.isfinite(self.max_dataset_gib) or self.max_dataset_gib <= 0:
+            raise ValueError("max_dataset_gib must be positive and finite")
+        if self.dataset_bytes > self.max_dataset_gib * 1024**3:
+            raise ValueError(f"Dataset requires {self.dataset_bytes / 1024**3:.2f} GiB, "
+                             f"exceeding max_dataset_gib={self.max_dataset_gib}")
+
+    @property
+    def dataset_bytes(self) -> int:
+        """CPU ring storage, including tactile diagnostics and optional float16 depth."""
+        state = 4 * (self.history_length * self.proprio_dim + self.goal_dim + self.action_dim) + 1
+        tactile = 2 * self.history_length * 112
+        return self.capacity * (state + tactile + (2 * 120 * 160 if self.use_depth else 0))
 
     @classmethod
     def from_dict(cls, values: dict[str, Any]) -> "OpenDoorDaggerConfig":

@@ -1,22 +1,38 @@
 # OpenDoor 本体＋触觉蒸馏
 
-学生使用 10 帧本体观测、10 帧 112 通道触觉和原 motion goal，输出 29 维动作。
+学生使用10帧本体观测和原motion goal，可选10帧112通道触觉、当前一帧depth，输出29维动作。
 教师沿用已有 OpenDoor checkpoint 的完整状态观测，参数和归一化统计冻结。
 学生不读取当前门的 9 维真值、物性、接触力或 Critic 输入；goal 仍是预先给定的参考轨迹。
 
 ## 运行
 
-在仓库根目录编辑 [配置](../../../configs/open_door_dagger_observable.json)，随后运行：
+新实验默认使用 [counts-only 配置](../../../configs/open_door_dagger_tactile_counts_only.json)，在仓库根目录运行：
 
 ```bash
 .venv/bin/python -m supermimic.scripts.distill_open_door --check
 .venv/bin/python -m supermimic.scripts.distill_open_door \
-  --config configs/open_door_dagger_observable.json
+  --config configs/open_door_dagger_tactile_counts_only.json
 ```
 
-两份正式配置默认读取触觉教师
+该配置沿用旧 model16 的全部采样和优化参数：3072环境、seed0、batch1024、LR2e-4，
+BC采集64步并更新4×48=192次；16轮DAgger每轮采集32步并更新4×74=296次，
+Replay容量300000、梯度裁剪1、weight decay 0、每轮保存。beta从1在8轮内降至0，
+按从0起算的round_index计算，因此model9–16使用纯student采集，动作标签仍来自teacher。
+新输出目录为 `logs/open_door_dagger_tactile_teacher7800_counts_only/`。
+
+`tactile_include_valid=false` 表示触觉网络每帧仅输入112维counts。
+有效性mask只用于预处理和诊断；无效读数或NaN/Inf填0，再除以255。
+各区域首层从 `2×通道数 → 64` 改为 `通道数 → 64`；其余编码器和Actor结构保持一致。
+触觉编码器及动作decoder随机初始化，由teacher-action MSE在BC和DAgger阶段共同优化，
+没有触觉特征拷贝、特征对齐loss或expert触觉权重初始化。
+旧实现也只复制goal编码器；新配置保留 `initialize_goal_from_teacher=true`，以保持这一对照条件一致。
+日志增加 `tactile_invalid_fraction`，统计采集时无效通道比例；整个物理状态或动作非有限仍会报错停止。
+
+旧配置 `open_door_dagger_observable.json` 和 `open_door_dagger_proprio.json` 保留原行为；
+缺少 `tactile_include_valid` 字段按 `true` 解释，以兼容旧checkpoint和原实验。
+新旧配置均默认读取触觉教师
 `logs/rsl_rl/supermimic_open_door/2026-11-12_11-21-19_back_tracking_dr_rsi_tactile/model_7800.pt`，
-使用3072环境、batch1024、16轮DAgger，触觉学生输出至
+旧配置使用3072环境、batch1024、16轮DAgger，触觉学生输出至
 `logs/open_door_dagger_tactile_teacher7800/`。训练使用原任务的随机初始化和物性分布，
 开始前从教师 checkpoint 恢复并核对任务配置。侧面任务可替换 `expert_checkpoint` 和
 `motion_dir` 为匹配的侧面模型及 NPZ；入口按 checkpoint 的任务类型选择环境。
@@ -44,27 +60,105 @@
 生命周期保持不变。将该选项设为
 `false` 可进行随机目标编码器的消融实验。
 
-CUHK两份同名JSON需将 `motion_dir` 设为
-`/data/wangfeng/supermimic_open_door_tracking/data/motions/open_door_prepared/video1_g1_door_video45_centered_asset.npz`，
-其余内容与本地一致。以下命令每组申请1张A100，直接读取对应JSON：
+### 可选depth输入（与Sitting相同）
+
+背部与侧面两份counts-only配置均提供独立的 `use_depth` 开关，默认 `false`。
+修改 `use_tactile` / `use_depth` 可以选择四种学生；每次实验同时指定独立的 `output_dir`：
+
+| use_tactile | use_depth | 学生输入（均含本体历史与goal） | Actor输入维度 |
+|---|---|---|---:|
+| false | false | 仅本体与goal | 962 |
+| true | false | 加触觉 | 1026 |
+| false | true | 加depth | 1026 |
+| true | true | 加触觉与depth | 1090 |
+
+例如仅使用depth，把相应任务的JSON修改为：
+
+```json
+"use_tactile": false,
+"use_depth": true,
+"output_dir": "logs/open_door_side_dagger_depth_teacher10000"
+```
+
+直接复用Sitting的 `DepthEncoder` 与共享HDMI相机，不另建视觉网络或训练入口。
+相机为G1的 `d435_link` 上的160×120针孔相机，50Hz更新；输入为当前帧光轴Z深度
+`[B,1,120,160]`、float32米。非正值与NaN/Inf映射到4m，裁剪到0.1–4m，无图像噪声、
+额外normalizer或有效性输入维度。三层5×5、stride2卷积（1→8→8→8，Mish）后投影到64维。
+depth CNN随机初始化，和触觉编码器、Actor共同由teacher-action MSE更新。
+
+深度图与本体、触觉、teacher标签都在执行动作前读取；step/reset由原生传感器更新相机缓存。
+CPU Replay存当前帧float16深度，取样时转回float32并重新通过当前CNN，避免存储过期latent。
+`use_depth=false` 不创建策略相机、CNN或深度Replay存储；回放显式 `--camera-view` 仍可显示诊断相机。
+深度学生回放会自动创建相机，不需要额外开关，`--camera-view`可同时显示RGB/depth。
+
+沿用容量300000时，含深度的CPU Replay约13.27GiB（不含采样batch、渲染器、模型和优化器）；
+`max_dataset_gib=16` 在配置解析时检查环形缓存预算，`--check`打印估计用量。
+原3072环境的采样/优化参数保持原值；开启相机后全规模GPU渲染占用需另行测量，
+本地小规模验证不代表3072相机已通过显存测试。
+
+### 侧面开门 counts-only 学生
+
+使用 [侧面配置](../../../configs/open_door_side_dagger_tactile_counts_only.json)：
+
+```bash
+.venv/bin/python -m supermimic.scripts.distill_open_door \
+  --config configs/open_door_side_dagger_tactile_counts_only.json --check
+.venv/bin/python -u -m supermimic.scripts.distill_open_door \
+  --config configs/open_door_side_dagger_tactile_counts_only.json
+```
+
+教师是已归档的侧面 `right_side_clearance_1cm_fresh_ac` 第10000轮Actor，参考为
+`video6_g1_door_video45_right_side_asset.npz`。该教师无触觉输入，`expert_observation_dim=102`；
+学生独立从Warp传感器读取112通道counts，随机初始化触觉编码器并用BC/DAgger优化。
+保留goal编码器初始化，采样及优化参数与上述背部counts-only配置完全一致。
+入口自动选择 `Mjlab-SuperMimic-OpenDoorSide-Unitree-G1`，恢复教师的侧面奖励、合法接触区域和物性配置，
+学生仍不读取当前门的9维真值。输出至 `logs/open_door_side_dagger_tactile_teacher10000_counts_only/`。
+这不需要开启侧面expert的 `task.use_tactile`，也不更改原expert的输入或权重。
+
+回放使用同一个工具，并明确选择侧面任务：
+
+```bash
+.venv/bin/python tools/play_tactile.py --task open_door_side \
+  --checkpoint logs/open_door_side_dagger_tactile_teacher10000_counts_only/model_16.pt \
+  --reference data/motions/open_door_prepared/video6_g1_door_video45_right_side_asset.npz --paused
+```
+
+配置中的教师路径是本地Actor归档；CUHK可使用同源完整checkpoint
+`logs/rsl_rl/supermimic_open_door_side/2026-11-01_01-14-42_right_side_clearance_1cm_fresh_ac/model_10000.pt`。
+蒸馏只读取Actor与任务元数据；motion_dir须改为服务器上实际的video6文件路径。
+
+### 在CUHK指定配置文件启动
+
+在CUHK仓库根目录使用现有Slurm脚本，配置文件作为第一个参数：
 
 ```bash
 cd /home/wangfeng/supermimic_vibed
 mkdir -p logs/slurm
-sbatch --account=interns --partition=gpu --nodes=1 --ntasks=1 --gres=gpu:a100:1 \
-  --cpus-per-task=8 --mem=32G --time=24:00:00 \
-  --job-name=door-distill-t7800-touch --output=logs/slurm/%x-%j.out \
-  --wrap='OMP_NUM_THREADS=8 PYTHONUNBUFFERED=1 srun --ntasks=1 .venv/bin/python -u -m supermimic.scripts.distill_open_door --config configs/open_door_dagger_observable.json'
-sbatch --account=interns --partition=gpu --nodes=1 --ntasks=1 --gres=gpu:a100:1 \
-  --cpus-per-task=8 --mem=32G --time=24:00:00 \
-  --job-name=door-distill-t7800-proprio --output=logs/slurm/%x-%j.out \
-  --wrap='OMP_NUM_THREADS=8 PYTHONUNBUFFERED=1 srun --ntasks=1 .venv/bin/python -u -m supermimic.scripts.distill_open_door --config configs/open_door_dagger_proprio.json'
+SUPERMIMIC_MOTION_DIR=/data/wangfeng/supermimic_open_door_tracking/data/motions/open_door_prepared/video1_g1_door_video45_centered_asset.npz \
+sbatch --job-name=door-back-dagger tools/distill_open_door.sbatch \
+  configs/open_door_dagger_tactile_counts_only.json
 ```
 
-现有 `tools/distill_open_door.sbatch` 会覆盖JSON中的教师路径为旧无触觉10000，
-不适用于本次7800实验；以上命令绕开该覆盖，CUHK无需修改代码。
-模型和生效配置直接保存到JSON指定的两个新输出目录，CUHK的 `logs` 指向
-`/data/wangfeng/supermimic_vibed/logs`。重新提交同一组前应指定新的空输出目录。
+侧面配置的本地Actor归档可显式换成服务器同源的完整teacher：
+
+```bash
+SUPERMIMIC_EXPERT_CHECKPOINT=logs/rsl_rl/supermimic_open_door_side/2026-11-01_01-14-42_right_side_clearance_1cm_fresh_ac/model_10000.pt \
+SUPERMIMIC_MOTION_DIR=data/motions/open_door_prepared/video6_g1_door_video45_right_side_asset.npz \
+sbatch --job-name=door-side-dagger tools/distill_open_door.sbatch \
+  configs/open_door_side_dagger_tactile_counts_only.json
+```
+
+替换最后的JSON即可使用自定义配置，`use_tactile`、`use_depth`及训练超参数均按该文件执行。
+脚本默认申请1张A100、8核CPU、64GiB内存；Slurm选定GPU，进程使用可见设备 `cuda:0`。
+`srun --cpu-bind=none`避免再次把训练主线程固定在单核，CPU集合仍由Slurm分配限制。
+教师路径和motion路径默认尊重JSON；仅显式设置 `SUPERMIMIC_EXPERT_CHECKPOINT` 或
+`SUPERMIMIC_MOTION_DIR` 时覆盖对应字段，不再强制替换为旧背部无触觉teacher/video1。
+使用自定义配置前核对这两个环境变量，避免遗留的覆盖值影响本次作业。
+
+每次作业把生效配置保存为 `logs/slurm/distill-<job_id>.json`，先运行 `--check`，
+再训练；输出自动保存到JSON中 `output_dir/slurm-<job_id>/`，console为 `logs/slurm/<job_name>-<job_id>.out`。
+脚本会检查teacher、motion和同名XML存在，并在训练初始化时核对任务元数据。
+开启depth后的3072环境渲染显存仍需实测，CPU Replay预算检查不代表GPU显存验证。
 
 ## 输入与编码
 
@@ -85,13 +179,14 @@ sbatch --account=interns --partition=gpu --nodes=1 --ntasks=1 --gres=gpu:a100:1 
 触觉编码借鉴 Uni-VLaT 的空间／时间融合，但采用本项目六区和小网络：
 
 1. 屏蔽无效 counts 后除以 255，按胸48、背40、左右臂8各、左右肩4各拆分。
-2. 每区把读数与有效性 mask 拼接，经独立 `2×通道数 → 64 → 64` MLP。
+2. counts-only学生每区只输入读数，经独立 `通道数 → 64 → 64` MLP。
+   旧学生和已有expert保留读数与mask拼接的 `2×通道数 → 64 → 64` 路径，以原样加载权重。
 3. 六个64维 learned queries 经4-head cross-attention和LayerNorm聚合区域特征。
 4. 每个token的10帧加入时间嵌入，经一层64维、4-head Transformer（FFN128，dropout0）。
    只读取当前及过去窗口，取最后位置输出，与当前空间token残差相加。
 5. 六个token展平，线性投影得到64维触觉latent。
 
-全无效输入仍有明确mask且输出有限，不使用会把全部key屏蔽的注意力掩码。
+全无效输入在新学生中清洗为全零counts且输出有限，不将mask拼入网络或用作注意力掩码。
 固定通道顺序来自资产；demo背部图的显示旋转不会作用于网络输入。
 仿真counts仍是未标定合成响应，参数和来源见[触觉文档](../../../docs/tactile.md)。
 
@@ -103,6 +198,7 @@ Actor保留原本体／goal归一化、goal编码器及decoder隐层，输入为
 
 `STUDENT_INPUT_DIM=930` 仍表示本体历史长度，完整decoder输入是1026。
 触觉latent只拼接一次；当前两组共用已训练的触觉expert7800。
+启用depth时再拼接64维depth latent；侧面配置使用独立的侧面expert10000。
 蒸馏不更新教师，也不训练世界模型或Critic。
 学生动作解码器及触觉编码器从头训练，goal分支按初始化配置处理；动作仍由现有action manager转换：
 
@@ -151,18 +247,25 @@ CPU环形容量受 `capacity` 限制，采样时搬到训练设备；归一化�
 
 输出包含 `config.json`、`train_log.csv`、BC后的 `model_bc.pt`，以及按 `save_every`
 保存的 `model_N.pt`（最后一轮总会保存）。checkpoint记录 `kind=open_door_tactile_student`、
-`schema_version=1`、输入契约、教师来源与任务信息、触觉布局／通道摘要及counts映射参数。
+输入契约、教师来源与任务信息、触觉布局／通道摘要及counts映射参数。
+counts-only触觉学生使用 `schema_version=2`，`policy_config.tactile_include_valid=false`；
+未启用depth的旧格式和无触觉学生保持schema1。
+depth学生使用schema3，kind为 `open_door_depth_student` 或 `open_door_tactile_depth_student`，
+额外保存相机metadata、depth输入契约与初始化来源；加载时严格核对相机配置和模态开关。
+`tactile_encoder`字段明确记录随机初始化、可训练及是否输入mask。
 `student` 包含编码器、Actor与归一化统计；这是学生推理权重，不是完整训练续训快照。
 
 ```python
 import torch
 from supermimic.distillation.open_door import OpenDoorStudentPolicy
 
+from supermimic.distillation.open_door import load_open_door_student
+
 checkpoint = torch.load("logs/open_door_dagger_tactile_teacher7800/model_16.pt", weights_only=False)
-student = OpenDoorStudentPolicy(use_tactile=checkpoint["config"].get("use_tactile", True)).eval()
-student.load_state_dict(checkpoint["student"], strict=True)
+student = load_open_door_student(checkpoint)
 with torch.no_grad():
-    action = student(proprio_history, goal, tactile_history, tactile_valid)
+    action = student(proprio_history, goal, tactile_history, tactile_valid,
+                     depth=current_depth if student.use_depth else None)
 ```
 
 部署时必须使用同一布局、counts参数及10帧历史规则。现有触觉回放工具支持学生 checkpoint，
@@ -173,6 +276,11 @@ with torch.no_grad():
   --checkpoint logs/open_door_dagger_tactile_teacher7800/model_16.pt \
   --reference data/motions/open_door_prepared/video1_g1_door_video45_centered_asset.npz
 ```
+
+新实验回放把上述checkpoint换成
+`logs/open_door_dagger_tactile_teacher7800_counts_only/model_16.pt`；同一工具会校验schema并选择匹配的编码器。
+旧评测脚本若只支持schema1，不能直接用于新模型；应按保存的 `tactile_include_valid` 构造学生并校验schema2。
+以下已有student-MBRL入口仍使用原mask编码器，暂不接受counts-only的schema2或含depth的schema3学生。
 
 学生 checkpoint 仍使用独立格式；不能作为完整RL续训快照加载。checkpoint 的
 `goal_encoder` 字段记录是否使用了教师初始化、`enc` 是否继续训练，以及归一化统计来源。

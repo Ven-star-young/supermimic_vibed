@@ -187,7 +187,10 @@ cfg.observations["tactile"] = ObservationGroupCfg(
 
 SuperMimic Runner 不会自动将新组拼入 Actor 或 WM。
 已有的 [OpenDoor BC/DAgger 蒸馏](../supermimic/distillation/open_door/README.md) 单独读取
-10帧 counts 和有效性 mask，编码为64维特征接入学生 Actor；默认使用原无触觉教师。
+10帧 counts 和有效性 mask，编码为64维特征接入学生 Actor，当前配置使用触觉teacher7800。
+新默认 `open_door_dagger_tactile_counts_only.json` 不将mask作为网络特征：无效及非有限读数
+在预处理层填0，每帧只编码112维counts。触觉编码器随机初始化，由BC/DAgger动作监督训练。
+mask仍保留在传感器、历史及Replay中作清洗和诊断；已有expert及schema1学生保留原输入结构。
 
 ## 背部开门 expert 的触觉输入
 

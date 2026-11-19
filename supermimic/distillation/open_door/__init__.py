@@ -18,6 +18,7 @@ from .models import (
     TactileEncoder,
     TactileHistory,
     load_frozen_open_door_expert,
+    load_open_door_student,
     split_open_door_history,
 )
 
@@ -41,6 +42,7 @@ __all__ = [
     "TactileEncoder",
     "TactileHistory",
     "load_frozen_open_door_expert",
+    "load_open_door_student",
     "mix_actions",
     "split_open_door_history",
 ]

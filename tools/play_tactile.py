@@ -26,8 +26,9 @@ from mjlab.viewer import ViserPlayViewer
 
 from motion_data.chair_split import load_split
 from supermimic.distillation.open_door.models import (
-    OpenDoorStudentPolicy, TactileHistory, split_open_door_history,
+    OpenDoorStudentPolicy, TactileHistory, split_open_door_history, load_open_door_student,
 )
+from supermimic.camera import configure_depth_camera, depth_observation
 from supermimic.rl.runner import SuperMimicRunner
 from supermimic.scripts import play_policy
 from supermimic.scripts.evaluate import _policy_config, _restore_open_door_config
@@ -67,6 +68,8 @@ def build_parser():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--port", type=int, default=8089)
     parser.add_argument("--paused", action="store_true", help="Open at the initial state; press Play to start")
+    parser.add_argument("--camera-view", action="store_true",
+                        help="Register the shared HDMI camera and show its live RGB/depth feeds")
     return parser
 
 
@@ -82,22 +85,16 @@ def load_deployment(args):
     checkpoint_path = (args.checkpoint or ROOT / default_checkpoint).expanduser().resolve()
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     kind = checkpoint.get("kind")
-    student = kind in ("open_door_tactile_student", "open_door_proprio_student")
+    student = kind in ("open_door_tactile_student", "open_door_proprio_student",
+                       "open_door_depth_student", "open_door_tactile_depth_student")
+    use_depth = False
     expert_tactile = None if student else checkpoint.get("task", {}).get("tactile")
     if student:
         if args.task == "sitting":
             raise ValueError("OpenDoor students require --task open_door or open_door_side")
         saved = checkpoint["config"]
-        use_tactile = saved.get("use_tactile", True)
-        if type(use_tactile) is not bool or use_tactile != (kind == "open_door_tactile_student"):
-            raise ValueError("Student checkpoint kind and use_tactile config disagree")
-        expected = {"history_length": 10, "goal_frames": 10, "proprio_dim": 93,
-                    "tactile_channels": 112 if use_tactile else 0,
-                    "tactile_latent_dim": 64 if use_tactile else 0, "action_dim": 29,
-                    "history_order": "oldest_to_newest",
-                    "tactile_units": "uint8_counts" if use_tactile else None}
-        if checkpoint.get("schema_version") != 1 or checkpoint.get("policy_config") != expected:
-            raise ValueError("Unsupported OpenDoor student input schema")
+        policy = load_open_door_student(checkpoint)
+        use_tactile, use_depth = policy.use_tactile, policy.use_depth
         response_cfg = G1TactileSensorCfg(name="tactile", layout=saved["tactile_layout"],
             contact_distance_m=saved["tactile_contact_distance_m"],
             counts_full_scale_depth_m=saved["tactile_counts_full_scale_depth_m"],
@@ -156,6 +153,8 @@ def load_deployment(args):
             setattr(command, field, _policy_config(checkpoint)[field])
         train_cfg = asdict(load_rl_cfg(task_id))
     cfg.scene.num_envs, cfg.auto_reset, cfg.seed = 1, False, args.seed
+    if use_depth or args.camera_view:
+        cfg = configure_depth_camera(cfg, rgb=args.camera_view)
     for sensor in cfg.scene.sensors:
         if sensor.name == "tactile":
             sensor.layout = response_cfg.layout
@@ -181,22 +180,21 @@ def load_deployment(args):
             for key in ("units", "distance", "formula", "channel_pooling", "invalid_counts"):
                 if sensor.metadata["counts_response"][key] != response[key]:
                     raise ValueError(f"Student tactile response mismatch: {key}")
-            policy = OpenDoorStudentPolicy(use_tactile=use_tactile).to(args.device)
-            policy.load_state_dict(checkpoint["student"], strict=True)
-            policy.eval().requires_grad_(False)
+            policy = policy.to(args.device)
             history = TactileHistory(native.num_envs, native.device) if use_tactile else None
 
             @torch.no_grad()
             def inference(observations):
                 proprio = split_open_door_history(observations["policy_history"],
                     expert_observation_dim=saved.get("expert_observation_dim", 102))
+                depth = depth_observation(native) if use_depth else None
                 if history is None:
-                    return policy(proprio, observations["goal"])
+                    return policy(proprio, observations["goal"], depth=depth)
                 sensor.update(0.)
                 reading = sensor.data
                 counts, valid = history.update(reading.channel_counts, reading.channel_valid,
                                                native.common_step_counter)
-                return policy(proprio, observations["goal"], counts, valid)
+                return policy(proprio, observations["goal"], counts, valid, depth=depth)
 
             if history is not None:
                 inference.reset = history.reset
@@ -310,7 +308,7 @@ class TactileViewer(ViserPlayViewer):
         # Keep tactile output above the stock tabs, visible alongside playback controls.
         with gui.add_folder("G1 Tactile (diagnostic only)" if self._tactile_diagnostic_only else "G1 Tactile", order=-1):
             if self._tactile_diagnostic_only:
-                gui.add_markdown("**Proprioception-only student:** tactile values are displayed for diagnostics and are not policy inputs.")
+                gui.add_markdown("Tactile values are displayed for diagnostics and are not policy inputs.")
             self._summary = gui.add_markdown("")
             playback = gui.add_button_group("Playback", ("Play / Pause", "Step", "Reset"))
 
@@ -490,9 +488,11 @@ def main(argv=None):
     before = play_policy.policy_digest(policy)
     student = isinstance(policy, OpenDoorStudentPolicy)
     diagnostic_only = (student or getattr(policy, "proprio_only", False)) and not policy.use_tactile
+    label = "G1 Proprio Policy / Tactile Diagnostics" if diagnostic_only else "G1 Policy + Tactile"
+    if getattr(policy, "use_depth", False):
+        label = "G1 Depth Policy / Tactile Diagnostics" if diagnostic_only else "G1 Depth + Tactile Policy"
     try:
-        server = viser.ViserServer(host="127.0.0.1", port=args.port,
-            label="G1 Proprio Policy / Tactile Diagnostics" if diagnostic_only else "G1 Policy + Tactile")
+        server = viser.ViserServer(host="127.0.0.1", port=args.port, label=label)
         viewer = TactileViewer(env, inference, server, checkpoint, reference, paused=args.paused,
                               mapping_locked=bool(getattr(policy, "use_tactile", False)),
                               tactile_diagnostic_only=diagnostic_only)

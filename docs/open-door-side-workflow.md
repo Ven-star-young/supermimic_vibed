@@ -112,6 +112,19 @@ SUPERMIMIC_MOTION_DIR=/absolute/path/video6_g1_door_video45_right_side_asset.npz
 checkpoint记录独立task name、允许区域、参考phase定义和奖励；不能将背部checkpoint
 直接当作侧面任务resume。网络维度相同也不代表奖励语义相同。
 
+## 蒸馏为本体＋触觉学生
+
+侧面策略也可通过独立的BC/DAgger入口蒸馏为本体＋触觉学生，使用
+[`configs/open_door_side_dagger_tactile_counts_only.json`](../configs/open_door_side_dagger_tactile_counts_only.json)。
+该配置采用已完成的侧面fresh-AC第10000轮教师与video6，使用3072环境、batch1024、LR2e-4、
+16轮DAgger；BC更新192次，每轮DAgger更新296次，teacher执行概率在8轮内降至0。
+触觉编码器随机初始化，每帧仅输入112维counts，NaN/Inf或无效读数预处理填0；
+valid不进入网络。goal编码器从侧面teacher初始化后继续训练。详见
+[蒸馏配置与回放命令](../supermimic/distillation/open_door/README.md#侧面开门-counts-only-学生)。
+同一JSON的 `use_depth` 可独立开启Sitting同款深度输入，与 `use_tactile` 组合为
+本体、触觉、depth或触觉＋depth四种学生；默认关闭depth，开启时另设输出目录。
+DAgger使用物理仿真采集和teacher动作监督，不使用下面的WM训练初始化流程。
+
 ## 使用背部世界模型初始化
 
 侧面JSON默认选择CUHK已完成的背部训练：

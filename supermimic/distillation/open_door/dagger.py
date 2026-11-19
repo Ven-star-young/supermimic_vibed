@@ -22,6 +22,7 @@ class DaggerStep:
     expert_mask: torch.Tensor
     tactile_history: torch.Tensor
     tactile_valid: torch.Tensor
+    depth: torch.Tensor | None = None
 
 
 def mix_actions(expert_action: torch.Tensor, student_action: torch.Tensor,
@@ -50,6 +51,11 @@ class DaggerCoordinator:
         self.config = config or OpenDoorDaggerConfig()
         if student.use_tactile != self.config.use_tactile:
             raise ValueError("Student tactile input must match the DAgger configuration")
+        if student.use_depth != self.config.use_depth:
+            raise ValueError("Student depth input must match the DAgger configuration")
+        if (student.use_tactile
+                and student.tactile_encoder.include_valid != self.config.tactile_include_valid):
+            raise ValueError("Student tactile validity input must match the DAgger configuration")
         self.expert = expert.eval()
         self.student = student
         self.dataset = dataset if dataset is not None else OpenDoorDaggerDataset(
@@ -58,7 +64,10 @@ class DaggerCoordinator:
             proprio_dim=self.config.proprio_dim,
             goal_dim=self.config.goal_dim,
             action_dim=self.config.action_dim,
+            use_depth=self.config.use_depth,
         )
+        if self.dataset.use_depth != self.config.use_depth:
+            raise ValueError("Dataset depth input must match the DAgger configuration")
         self.device = device or next(student.parameters()).device
         self.optimizer = torch.optim.Adam(
             self.student.parameters(),
@@ -77,6 +86,7 @@ class DaggerCoordinator:
     def label_and_select(self, policy_history: torch.Tensor, goal: torch.Tensor,
                          beta: float, *, tactile_history: torch.Tensor,
                          tactile_valid: torch.Tensor,
+                         depth: torch.Tensor | None = None,
                          generator: torch.Generator | None = None) -> DaggerStep:
         """Label current student-observed states before executing the next action."""
 
@@ -90,18 +100,25 @@ class DaggerCoordinator:
         goal = goal.detach().clone()
         tactile_history = tactile_history.detach().clone()
         tactile_valid = tactile_valid.detach().clone()
+        if self.config.use_depth:
+            if depth is None:
+                raise ValueError("Depth configuration requires a depth observation")
+            depth = depth.detach().clone()
+        elif depth is not None:
+            raise ValueError("Configuration without depth does not accept depth")
         self.student.eval()
         expert_action = self.expert(policy_history, goal)
-        student_action = self.student(proprio, goal, tactile_history, tactile_valid)
+        student_action = self.student(proprio, goal, tactile_history, tactile_valid, depth=depth)
         executed, mask = mix_actions(expert_action, student_action, beta, generator=generator)
         return DaggerStep(proprio, goal, expert_action, student_action, executed, mask,
-                          tactile_history, tactile_valid)
+                          tactile_history, tactile_valid, depth)
 
     def record(self, step: DaggerStep, done: torch.Tensor | None = None) -> None:
         """Store the pre-step snapshot with the executed transition's done flag."""
 
         self.dataset.add(step.proprio_history, step.goal, step.expert_action, done,
-                         tactile_history=step.tactile_history, tactile_valid=step.tactile_valid)
+                         tactile_history=step.tactile_history, tactile_valid=step.tactile_valid,
+                         depth=step.depth)
 
     def train_epoch(self, batches: int | None = None) -> float:
         if len(self.dataset) == 0:
@@ -117,7 +134,7 @@ class DaggerCoordinator:
         for _ in range(batches):
             batch: DaggerBatch = self.dataset.sample(self.config.batch_size, device=self.device)
             prediction = self.student(batch.proprio_history, batch.goal,
-                                      batch.tactile_history, batch.tactile_valid)
+                                      batch.tactile_history, batch.tactile_valid, depth=batch.depth)
             loss = (prediction - batch.expert_action).square().mean()
             self.optimizer.zero_grad(set_to_none=True)
             loss.backward()

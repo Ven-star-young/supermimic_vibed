@@ -78,17 +78,21 @@ class TactileEncoder(nn.Module):
     """Six-region spatial attention and ten-frame temporal attention to a 64-D latent.
 
     Counts are raw uint8 or floating 0–255 values in the frozen channel order;
-    validity is a separate boolean tensor. Invalid counts are removed before
-    normalization, and each region's validity mask is part of its MLP input.
+    Validity can mask bad readings before normalization. New counts-only
+    students do not feed this mask into the MLP; include_valid preserves the
+    original expert/student checkpoint architecture.
     """
 
-    def __init__(self, history_length: int = 10):
+    def __init__(self, history_length: int = 10, *, include_valid: bool = True):
         super().__init__()
         if history_length != 10:
             raise ValueError("TactileEncoder requires history_length=10")
+        if not isinstance(include_valid, bool):
+            raise ValueError("include_valid must be boolean")
         self.history_length = history_length
+        self.include_valid = include_valid
         self.region_mlps = nn.ModuleList([
-            nn.Sequential(nn.Linear(2 * size, 64), nn.SiLU(), nn.Linear(64, 64))
+            nn.Sequential(nn.Linear((2 if include_valid else 1) * size, 64), nn.SiLU(), nn.Linear(64, 64))
             for size in TACTILE_REGION_SIZES
         ])
         self.queries = nn.Parameter(torch.empty(6, 64))
@@ -102,16 +106,27 @@ class TactileEncoder(nn.Module):
         nn.init.normal_(self.queries, std=0.02)
         nn.init.normal_(self.time_embeddings, std=0.02)
 
-    def forward(self, counts: torch.Tensor, valid: torch.Tensor) -> torch.Tensor:
+    def forward(self, counts: torch.Tensor, valid: torch.Tensor | None = None) -> torch.Tensor:
         if (counts.ndim != 3 or counts.shape[1:] != (self.history_length, TACTILE_CHANNELS)
-                or valid.shape != counts.shape or valid.dtype != torch.bool
                 or (counts.dtype != torch.uint8 and not counts.is_floating_point())):
-            raise ValueError("Expected raw counts and bool validity [B,10,112]")
-        values = torch.where(valid, counts, 0).to(self.queries.dtype) / 255.0
-        validity = valid.to(values.dtype)
+            raise ValueError("Expected raw counts [B,10,112]")
+        if valid is not None and (valid.shape != counts.shape or valid.dtype != torch.bool
+                                  or valid.device != counts.device):
+            raise ValueError("Expected bool validity matching counts [B,10,112]")
+        if self.include_valid:
+            if valid is None:
+                raise ValueError("Legacy tactile encoders require validity")
+            values = torch.where(valid, counts, 0).to(self.queries.dtype) / 255.0
+        else:
+            usable = torch.isfinite(counts)
+            if valid is not None:
+                usable = usable & valid
+            values = torch.where(usable, counts, 0).to(self.queries.dtype) / 255.0
         regions, start = [], 0
         for size, mlp in zip(TACTILE_REGION_SIZES, self.region_mlps, strict=True):
-            inputs = torch.cat((values[..., start:start + size], validity[..., start:start + size]), dim=-1)
+            inputs = values[..., start:start + size]
+            if self.include_valid:
+                inputs = torch.cat((inputs, valid[..., start:start + size].to(values.dtype)), dim=-1)
             regions.append(mlp(inputs))
             start += size
         batch = counts.shape[0]

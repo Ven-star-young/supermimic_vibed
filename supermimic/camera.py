@@ -11,7 +11,7 @@ def configure_depth_camera(cfg, *, rgb=False):
     """Wrap the G1 asset camera; native step/reset senses before observations."""
     if not math.isclose(cfg.sim.mujoco.timestep * cfg.decimation,
                         HDMI_CAMERA_METADATA["update_period"]):
-        raise ValueError("Sitting depth requires 50 Hz control and camera updates")
+        raise ValueError("Depth requires 50 Hz control and camera updates")
     if any(sensor.name == "depth_camera" for sensor in cfg.scene.sensors):
         raise ValueError("depth_camera is already registered")
     cfg.scene.sensors += (CameraSensorCfg(

@@ -9,6 +9,7 @@ from pathlib import Path
 import torch
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.tasks.registry import load_env_cfg
+from supermimic.camera import HDMI_CAMERA_METADATA, configure_depth_camera, depth_observation
 
 from supermimic.distillation.open_door import (
     DaggerCoordinator, FrozenOpenDoorExpert, OpenDoorDaggerConfig, OpenDoorStudentPolicy,
@@ -19,7 +20,7 @@ from supermimic.scripts.play_policy import policy_digest
 from supermimic.tasks.open_door.models import Policy
 
 
-DEFAULT_CONFIG = Path(__file__).resolve().parents[2] / "configs/open_door_dagger_observable.json"
+DEFAULT_CONFIG = Path(__file__).resolve().parents[2] / "configs/open_door_dagger_tactile_counts_only.json"
 TASKS = {
     "g1_open_door": "Mjlab-SuperMimic-OpenDoor-Unitree-G1",
     "g1_open_door_side": "Mjlab-SuperMimic-OpenDoorSide-Unitree-G1",
@@ -51,7 +52,7 @@ def make_env_cfg(config, checkpoint):
             sensor.contact_distance_m = config.tactile_contact_distance_m
             sensor.counts_full_scale_depth_m = config.tactile_counts_full_scale_depth_m
             sensor.counts_exponent = config.tactile_counts_exponent
-    return cfg
+    return configure_depth_camera(cfg) if config.use_depth else cfg
 
 
 @torch.no_grad()
@@ -68,7 +69,8 @@ def collect(env, coordinator, tactile_history, steps, beta):
         counts, valid = tactile_history.update(tactile.channel_counts, tactile.channel_valid,
                                                env.common_step_counter)
         step = coordinator.label_and_select(observations["policy_history"], observations["goal"], beta,
-                                            tactile_history=counts, tactile_valid=valid)
+                                            tactile_history=counts, tactile_valid=valid,
+                                            depth=depth_observation(env) if coordinator.config.use_depth else None)
         if not torch.isfinite(step.executed_action).all() or not torch.isfinite(step.expert_action).all():
             raise FloatingPointError("Nonfinite expert/student action during distillation")
         _, reward, terminated, truncated, _ = env.step(step.executed_action)
@@ -87,21 +89,33 @@ def collect(env, coordinator, tactile_history, steps, beta):
             env.reset(env_ids=ids)
             tactile_history.reset(ids)
     return {"teacher_fraction": teacher_count / (steps * env.num_envs),
-            "tactile_nonzero_fraction": contact_count / max(valid_count, 1), "episodes": episodes}
+            "tactile_nonzero_fraction": contact_count / max(valid_count, 1),
+            "tactile_invalid_fraction": 1 - valid_count / (steps * env.num_envs * 112),
+            "episodes": episodes}
 
 
 def save_student(path, coordinator, sensor, checkpoint, metrics):
     """Save the deployable student, input schema and tactile provenance."""
     config = coordinator.config
-    torch.save({
-        "kind": "open_door_tactile_student" if config.use_tactile else "open_door_proprio_student",
-        "schema_version": 1,
+    counts_only = config.use_tactile and not config.tactile_include_valid
+    policy_config = {"history_length": 10, "goal_frames": 10, "proprio_dim": 93,
+                     "tactile_channels": 112 if config.use_tactile else 0,
+                     "tactile_latent_dim": 64 if config.use_tactile else 0, "action_dim": 29,
+                     "history_order": "oldest_to_newest",
+                     "tactile_units": "uint8_counts" if config.use_tactile else None}
+    if counts_only:
+        policy_config["tactile_include_valid"] = False
+    kind = "open_door_tactile_student" if config.use_tactile else "open_door_proprio_student"
+    if config.use_depth:
+        kind = "open_door_tactile_depth_student" if config.use_tactile else "open_door_depth_student"
+        policy_config.update(use_depth=True, goal_dim=750, depth_shape=[1, 120, 160], depth_latent_dim=64,
+                             depth_units="metres",
+                             tactile_include_valid=config.tactile_include_valid if config.use_tactile else False)
+    payload = {
+        "kind": kind,
+        "schema_version": 3 if config.use_depth else (2 if counts_only else 1),
         "student": coordinator.student.state_dict(),
-        "policy_config": {"history_length": 10, "goal_frames": 10, "proprio_dim": 93,
-                          "tactile_channels": 112 if config.use_tactile else 0,
-                          "tactile_latent_dim": 64 if config.use_tactile else 0, "action_dim": 29,
-                          "history_order": "oldest_to_newest",
-                          "tactile_units": "uint8_counts" if config.use_tactile else None},
+        "policy_config": policy_config,
         "config": config.to_dict(), "expert_checkpoint": str(Path(config.expert_checkpoint).resolve()),
         "expert_task": checkpoint["task"], "tactile_metadata": sensor.metadata,
         "goal_encoder": {
@@ -109,8 +123,19 @@ def save_student(path, coordinator, sensor, checkpoint, metrics):
             "encoder_parameters_trainable_after_initialization": True,
             "normalizer_statistics": "teacher_then_bc_initialization",
         },
+        "tactile_encoder": {
+            "initialization": "random" if config.use_tactile else None,
+            "initialized_from_teacher": False,
+            "trainable": config.use_tactile,
+            "include_valid": config.tactile_include_valid if config.use_tactile else None,
+        },
         "metrics": metrics,
-    }, path)
+    }
+    if config.use_depth:
+        payload["camera_metadata"] = HDMI_CAMERA_METADATA
+        payload["depth_encoder"] = {"initialization": "random", "initialized_from_teacher": False,
+                                    "trainable": True}
+    torch.save(payload, path)
 
 
 def train(config):
@@ -124,7 +149,9 @@ def train(config):
         env.command_manager.get_term("motion").task.validate_checkpoint(checkpoint)
         expert = FrozenOpenDoorExpert(Policy(use_tactile="tactile" in checkpoint["task"]).to(config.device))
         expert.load_checkpoint(checkpoint)
-        student = OpenDoorStudentPolicy(use_tactile=config.use_tactile).to(config.device)
+        student = OpenDoorStudentPolicy(use_tactile=config.use_tactile,
+                                       tactile_include_valid=config.tactile_include_valid,
+                                       use_depth=config.use_depth).to(config.device)
         if config.initialize_goal_from_teacher:
             student.initialize_goal_from_expert(expert.expert)
         coordinator = DaggerCoordinator(expert, student, config=config, device=config.device)
@@ -133,8 +160,10 @@ def train(config):
         before = policy_digest(expert.expert)
         output.mkdir(parents=True, exist_ok=True)
         config.save_json(output / "config.json")
+        print(f"[OpenDoor DAgger] tactile={config.use_tactile}, depth={config.use_depth} | "
+              f"CPU dataset {config.dataset_bytes / 1024**3:.2f} GiB", flush=True)
         fields = ("phase", "round", "beta", "dataset_size", "action_mse",
-                  "teacher_fraction", "tactile_nonzero_fraction", "episodes")
+                  "teacher_fraction", "tactile_nonzero_fraction", "tactile_invalid_fraction", "episodes")
         with (output / "train_log.csv").open("w", newline="") as stream:
             writer = csv.DictWriter(stream, fieldnames=fields)
             writer.writeheader()
@@ -168,7 +197,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     config = OpenDoorDaggerConfig.from_json(args.config)
     if args.check:
-        print(json.dumps(config.to_dict(), indent=2))
+        print(json.dumps(dict(config=config.to_dict(), dataset_gib=config.dataset_bytes / 1024**3), indent=2))
         return
     train(config)
 
