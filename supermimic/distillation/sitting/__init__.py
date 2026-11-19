@@ -1,4 +1,4 @@
-"""Sitting BC/DAgger with ten proprioceptive frames and one depth image."""
+"""Sitting BC/DAgger with ten proprioceptive frames and optional depth."""
 
 from .config import SittingDaggerConfig
 from .dataset import DaggerBatch, SittingDaggerDataset
@@ -12,6 +12,7 @@ from .models import (
     HISTORY_LENGTH,
     OBS_DIM,
     PROPRIO_DIM,
+    STUDENT_PROPRIO_INPUT_DIM,
     STUDENT_INPUT_DIM,
     DepthEncoder,
     FrozenSittingExpert,
@@ -23,7 +24,7 @@ from .models import (
 
 __all__ = [
     "ACTION_DIM", "DEPTH_HEIGHT", "DEPTH_LATENT_DIM", "DEPTH_WIDTH", "GOAL_DIM",
-    "HISTORY_LENGTH", "OBS_DIM", "PROPRIO_DIM", "STUDENT_INPUT_DIM", "DaggerBatch",
+    "HISTORY_LENGTH", "OBS_DIM", "PROPRIO_DIM", "STUDENT_PROPRIO_INPUT_DIM", "STUDENT_INPUT_DIM", "DaggerBatch",
     "DaggerCoordinator", "DaggerStep", "DepthEncoder", "FrozenSittingExpert",
     "SittingDaggerConfig", "SittingDaggerDataset", "SittingStudentPolicy",
     "load_frozen_sitting_expert", "load_sitting_student", "mix_actions", "split_sitting_history",

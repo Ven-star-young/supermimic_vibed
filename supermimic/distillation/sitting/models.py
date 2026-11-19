@@ -20,7 +20,8 @@ ACTION_DIM = 29
 DEPTH_HEIGHT = 120
 DEPTH_WIDTH = 160
 DEPTH_LATENT_DIM = 64
-STUDENT_INPUT_DIM = PROPRIO_DIM * HISTORY_LENGTH + 32 + DEPTH_LATENT_DIM
+STUDENT_PROPRIO_INPUT_DIM = PROPRIO_DIM * HISTORY_LENGTH + 32
+STUDENT_INPUT_DIM = STUDENT_PROPRIO_INPUT_DIM + DEPTH_LATENT_DIM
 
 
 def _as_history(value: torch.Tensor, *, frame_dim: int) -> torch.Tensor:
@@ -49,19 +50,23 @@ class DepthEncoder(nn.Sequential):
 
 
 class SittingStudentPolicy(_BasePolicy):
-    """930 proprioception + 32 goal + 64 depth features produce 29 normalized actions.
+    """930 proprioception + 32 goal, optionally augmented with 64 depth features.
 
     Inputs are ten oldest-to-newest proprioceptive frames, the existing 730-D
     robot goal, and the current float32 depth image clipped to 0.1--4 metres.
     Image values bypass running normalization; the CNN is trained with the actor.
     """
 
-    def __init__(self):
+    def __init__(self, *, use_depth: bool = True):
+        if not isinstance(use_depth, bool):
+            raise ValueError("use_depth must be boolean")
         super().__init__(obs_dim=PROPRIO_DIM, goal_dim=GOAL_DIM,
                          hist=HISTORY_LENGTH, action_dim=ACTION_DIM)
+        self.use_depth = use_depth
         self.goal_initialized_from_teacher = False
-        self.depth_encoder = DepthEncoder()
-        self.dec[0] = nn.Linear(STUDENT_INPUT_DIM, self.dec[0].out_features)
+        self.depth_encoder = DepthEncoder() if use_depth else None
+        if use_depth:
+            self.dec[0] = nn.Linear(STUDENT_INPUT_DIM, self.dec[0].out_features)
 
     @torch.no_grad()
     def initialize_goal_from_expert(self, expert: nn.Module) -> None:
@@ -69,17 +74,23 @@ class SittingStudentPolicy(_BasePolicy):
             getattr(self, name).load_state_dict(getattr(expert, name).state_dict())
         self.goal_initialized_from_teacher = True
 
-    def forward(self, proprio_history: torch.Tensor, goal: torch.Tensor, depth: torch.Tensor):
+    def forward(self, proprio_history: torch.Tensor, goal: torch.Tensor,
+                depth: torch.Tensor | None = None):
         history = _as_history(proprio_history, frame_dim=PROPRIO_DIM)
         batch = history.shape[0]
         if goal.shape != (batch, GOAL_DIM):
             raise ValueError(f"Expected goal [B,{GOAL_DIM}], got {tuple(goal.shape)}")
-        if depth.shape != (batch, 1, DEPTH_HEIGHT, DEPTH_WIDTH) or depth.dtype != torch.float32:
-            raise ValueError("Expected float32 metric depth [B,1,120,160]")
         goal_latent = torch.tanh(run_mlp(self.enc, self.goal_norm(goal)))
         proprio = self.obs_norm(history).flatten(-2)
-        depth_latent = self.depth_encoder(depth)
-        return run_mlp(self.dec, torch.cat((goal_latent, proprio, depth_latent), dim=-1))
+        features = [goal_latent, proprio]
+        if self.use_depth:
+            if (depth is None or depth.shape != (batch, 1, DEPTH_HEIGHT, DEPTH_WIDTH)
+                    or depth.dtype != torch.float32):
+                raise ValueError("Depth students require float32 metric depth [B,1,120,160]")
+            features.append(self.depth_encoder(depth))
+        elif depth is not None:
+            raise ValueError("Proprioception students do not accept depth input")
+        return run_mlp(self.dec, torch.cat(features, dim=-1))
 
 
 class FrozenSittingExpert(nn.Module):
@@ -125,21 +136,30 @@ def load_sitting_student(checkpoint: dict[str, Any],
     """Validate the inference contract, then load a frozen BC/DAgger student."""
     from ...camera import HDMI_CAMERA_METADATA
 
-    if checkpoint.get("kind") != "sitting_depth_student" or checkpoint.get("schema_version") != 1:
-        raise ValueError("Expected a sitting_depth_student checkpoint with schema_version=1")
-    if checkpoint.get("camera_metadata") != HDMI_CAMERA_METADATA:
+    kind = checkpoint.get("kind")
+    if kind not in ("sitting_depth_student", "sitting_proprio_student") or checkpoint.get("schema_version") != 1:
+        raise ValueError("Expected a sitting_depth_student or sitting_proprio_student checkpoint with schema_version=1")
+    use_depth = kind == "sitting_depth_student"
+    if use_depth and checkpoint.get("camera_metadata") != HDMI_CAMERA_METADATA:
         raise ValueError("Sitting student camera metadata differs from the HDMI depth configuration")
+    if not use_depth and checkpoint.get("camera_metadata") is not None:
+        raise ValueError("Proprioception student must not contain camera metadata")
+    policy_config = checkpoint.get("policy_config", {})
+    declared_use_depth = policy_config.get("use_depth", use_depth)
+    if declared_use_depth != use_depth:
+        raise ValueError("Sitting student use_depth metadata does not match checkpoint kind")
     expected = {"history_length": HISTORY_LENGTH, "goal_frames": HISTORY_LENGTH,
                 "proprio_dim": PROPRIO_DIM, "goal_dim": GOAL_DIM,
-                "depth_shape": [1, DEPTH_HEIGHT, DEPTH_WIDTH], "depth_latent_dim": DEPTH_LATENT_DIM,
-                "action_dim": ACTION_DIM, "history_order": "oldest_to_newest", "depth_units": "metres"}
-    policy_config = checkpoint.get("policy_config", {})
+                "action_dim": ACTION_DIM, "history_order": "oldest_to_newest"}
+    if use_depth:
+        expected.update(depth_shape=[1, DEPTH_HEIGHT, DEPTH_WIDTH], depth_latent_dim=DEPTH_LATENT_DIM,
+                        depth_units="metres")
     for name, value in expected.items():
         if policy_config.get(name) != value:
             raise ValueError(f"Sitting student requires policy_config.{name}={value!r}")
     if "student" not in checkpoint:
         raise ValueError("Sitting student checkpoint lacks the 'student' state dict")
-    policy = SittingStudentPolicy().to(device)
+    policy = SittingStudentPolicy(use_depth=use_depth).to(device)
     policy.load_state_dict(checkpoint["student"], strict=True)
     policy.goal_initialized_from_teacher = checkpoint.get("goal_encoder", {}).get("initialized_from_teacher", False)
     return policy.eval().requires_grad_(False)

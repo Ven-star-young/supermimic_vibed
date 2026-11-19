@@ -1,4 +1,4 @@
-"""Configuration for single-frame sitting depth BC and DAgger."""
+"""Configuration for sitting proprioception/depth BC and DAgger."""
 
 from dataclasses import asdict, dataclass, fields
 import json
@@ -21,6 +21,7 @@ class SittingDaggerConfig:
     collision_profile: str = "default"
     output_dir: str = "logs/sitting_dagger_depth"
     num_envs: int = 83
+    use_depth: bool = True
     initialize_goal_from_teacher: bool = True
     device: str = "cuda:0"
     seed: int = 0
@@ -48,6 +49,8 @@ class SittingDaggerConfig:
             raise ValueError("Sitting distillation requires history10/proprio93/expert102/goal730/action29")
         if not isinstance(self.initialize_goal_from_teacher, bool):
             raise ValueError("initialize_goal_from_teacher must be boolean")
+        if not isinstance(self.use_depth, bool):
+            raise ValueError("use_depth must be boolean")
         for name in ("num_envs", "rounds", "bc_rollout_steps", "bc_train_epochs", "bc_batches",
                      "rollout_steps", "updates_per_round", "save_every", "capacity", "batch_size",
                      "train_epochs", "beta_decay_rounds"):
@@ -67,7 +70,8 @@ class SittingDaggerConfig:
     @property
     def dataset_bytes(self) -> int:
         """CPU ring storage, excluding sampled batches and optimizer/model memory."""
-        return self.capacity * (2 * 120 * 160 + 4 * (10 * 93 + 730 + 29) + 1)
+        proprio_goal_action = 4 * (10 * 93 + 730 + 29) + 1
+        return self.capacity * (proprio_goal_action + (2 * 120 * 160 if self.use_depth else 0))
 
     @classmethod
     def from_dict(cls, values: dict[str, Any]) -> "SittingDaggerConfig":

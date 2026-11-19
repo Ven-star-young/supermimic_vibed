@@ -1,4 +1,4 @@
-"""DAgger collection and supervised updates for the sitting depth student."""
+"""DAgger collection and supervised updates for the sitting student."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ class DaggerStep:
     student_action: torch.Tensor
     executed_action: torch.Tensor
     expert_mask: torch.Tensor
-    depth: torch.Tensor
+    depth: torch.Tensor | None
 
 
 def mix_actions(expert_action: torch.Tensor, student_action: torch.Tensor,
@@ -41,9 +41,12 @@ class DaggerCoordinator:
                  dataset: SittingDaggerDataset | None = None,
                  config: SittingDaggerConfig | None = None, *, device=None):
         self.config = config or SittingDaggerConfig()
+        if student.use_depth != self.config.use_depth:
+            raise ValueError("Student depth input must match the DAgger configuration")
         self.expert = expert.eval()
         self.student = student
-        self.dataset = dataset if dataset is not None else SittingDaggerDataset(self.config.capacity)
+        self.dataset = dataset if dataset is not None else SittingDaggerDataset(
+            self.config.capacity, use_depth=self.config.use_depth)
         self.device = device or next(student.parameters()).device
         self.optimizer = torch.optim.Adam(student.parameters(), lr=self.config.learning_rate,
                                           weight_decay=self.config.weight_decay)
@@ -57,12 +60,18 @@ class DaggerCoordinator:
 
     @torch.no_grad()
     def label_and_select(self, policy_history: torch.Tensor, goal: torch.Tensor,
-                         beta: float, *, depth: torch.Tensor, geometry_ids: torch.Tensor,
+                         beta: float, *, depth: torch.Tensor | None, geometry_ids: torch.Tensor,
                          generator: torch.Generator | None = None) -> DaggerStep:
         """Snapshot one pre-action state; privileged chair data stays in the teacher."""
         policy_history = policy_history.detach().clone()
         proprio = split_sitting_history(policy_history).clone()
-        goal, depth = goal.detach().clone(), depth.detach().clone()
+        goal = goal.detach().clone()
+        if self.config.use_depth:
+            if depth is None:
+                raise ValueError("Depth configuration requires a depth observation")
+            depth = depth.detach().clone()
+        elif depth is not None:
+            raise ValueError("Proprioception configuration does not accept depth")
         geometry_ids = geometry_ids.detach().clone()
         self.student.eval()
         expert_action = self.expert(policy_history, goal, geometry_ids)

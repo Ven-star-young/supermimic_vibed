@@ -63,7 +63,7 @@ def make_env_cfg(config, manifest, root):
     command = cfg.commands["motion"]
     command.history_length, command.goal_frames, command.sampling_mode = 10, 10, "adaptive"
     cfg.auto_reset = False
-    return configure_depth_camera(cfg)
+    return configure_depth_camera(cfg) if config.use_depth else cfg
 
 
 @torch.no_grad()
@@ -80,7 +80,8 @@ def collect(env, coordinator, steps, beta, *, episode_returns=None):
         observations = env.observation_manager.compute()
         step = coordinator.label_and_select(
             observations["policy_history"], observations["goal"], beta,
-            depth=depth_observation(env), geometry_ids=command.task.geometry_ids(observations["context"]))
+            depth=depth_observation(env) if coordinator.config.use_depth else None,
+            geometry_ids=command.task.geometry_ids(observations["context"]))
         if not torch.isfinite(step.executed_action).all() or not torch.isfinite(step.expert_action).all():
             raise FloatingPointError("Nonfinite expert/student action during distillation")
         _, reward, terminated, truncated, _ = env.step(step.executed_action)
@@ -112,17 +113,17 @@ def collect(env, coordinator, steps, beta, *, episode_returns=None):
 
 def save_student(path, coordinator, checkpoint, protocol, metrics, expert_digest):
     config = coordinator.config
-    torch.save({
-        "kind": "sitting_depth_student", "schema_version": 1,
+    payload = {
+        "kind": "sitting_depth_student" if config.use_depth else "sitting_proprio_student",
+        "schema_version": 1,
         "student": coordinator.student.state_dict(),
         "policy_config": {"history_length": 10, "goal_frames": 10, "proprio_dim": 93,
-                          "goal_dim": 730, "depth_shape": [1, 120, 160], "depth_latent_dim": 64,
-                          "action_dim": 29, "history_order": "oldest_to_newest", "depth_units": "metres"},
+                          "goal_dim": 730, "action_dim": 29, "history_order": "oldest_to_newest",
+                          "use_depth": config.use_depth},
         "config": config.to_dict(), "task": checkpoint["task"],
         "expert_checkpoint": str(Path(config.expert_checkpoint).resolve()),
         "expert_iteration": checkpoint.get("iteration"), "expert_policy_digest": expert_digest,
         "expert_policy_config": checkpoint["policy_config"],
-        "camera_metadata": HDMI_CAMERA_METADATA,
         "goal_encoder": {
             "initialized_from_teacher": bool(coordinator.student.goal_initialized_from_teacher),
             "encoder_parameters_trainable_after_initialization": True,
@@ -130,7 +131,10 @@ def save_student(path, coordinator, checkpoint, protocol, metrics, expert_digest
         },
         "infos": {"sitting_experiment": protocol},
         "iteration": int(metrics["round"]) + 1, "metrics": metrics,
-    }, path)
+    }
+    if config.use_depth:
+        payload["camera_metadata"] = HDMI_CAMERA_METADATA
+    torch.save(payload, path)
 
 
 def train(config, checkpoint, manifest, root):
@@ -146,7 +150,7 @@ def train(config, checkpoint, manifest, root):
         command.task.validate_checkpoint(checkpoint)
         expert = FrozenSittingExpert(SittingPolicy(command.geometry_bank).to(config.device))
         expert.load_checkpoint(checkpoint)
-        student = SittingStudentPolicy().to(config.device)
+        student = SittingStudentPolicy(use_depth=config.use_depth).to(config.device)
         if config.initialize_goal_from_teacher:
             student.initialize_goal_from_expert(expert.expert)
         coordinator = DaggerCoordinator(expert, student, config=config, device=config.device)
@@ -161,7 +165,8 @@ def train(config, checkpoint, manifest, root):
         output.mkdir(parents=True, exist_ok=True)
         config.save_json(output / "config.json")
         (output / "split.json").write_text(json.dumps({**manifest, "data_root": str(root)}, indent=2) + "\n")
-        print(f"[sitting depth] {env.num_envs} environments | 200 Hz physics | 50 Hz depth/action "
+        print(f"[sitting {'depth' if config.use_depth else 'proprio'}] {env.num_envs} environments | "
+              f"200 Hz physics | 50 Hz {'depth/' if config.use_depth else ''}action "
               f"(simulation time) | CPU dataset {config.dataset_bytes / 1024**3:.2f} GiB", flush=True)
         fields = ("phase", "round", "beta", "dataset_size", "action_mse", "teacher_fraction", "episodes",
                   "first_control_step", "last_control_step", "simulation_seconds")

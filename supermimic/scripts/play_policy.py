@@ -374,7 +374,7 @@ def run_reference(checkpoint, manifest, reference, args, *, on_record=None, metr
         env = DeploymentEnv(native, args.episodes, args.max_steps,
             seeds=getattr(args, "trial_seeds", None), metrics_cfg=metrics_cfg, on_record=on_record)
         runner = None
-        if checkpoint.get("kind") == "sitting_depth_student":
+        if checkpoint.get("kind") in ("sitting_depth_student", "sitting_proprio_student"):
             from supermimic.camera import depth_observation
             from supermimic.distillation.sitting.models import load_sitting_student
             native.command_manager.get_term("motion").task.validate_checkpoint(checkpoint)
@@ -384,10 +384,14 @@ def run_reference(checkpoint, manifest, reference, args, *, on_record=None, metr
             actor = load_sitting_student(checkpoint, device=args.device)
 
             def policy(observations):
+                history = observations["policy_history"].reshape(native.num_envs, 10, 102)
+                if checkpoint.get("kind") == "sitting_proprio_student":
+                    if args.depth_input != "current":
+                        raise ValueError("--depth-input applies only to sitting depth students")
+                    return actor(history[..., :93], observations["goal"])
                 depth = depth_observation(native)
                 if args.depth_input == "constant":
                     depth = torch.full_like(depth, 4.0)
-                history = observations["policy_history"].reshape(native.num_envs, 10, 102)
                 return actor(history[..., :93], observations["goal"], depth)
         else:
             if args.depth_input != "current":
