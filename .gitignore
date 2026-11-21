@@ -18,9 +18,11 @@ logs/
 # rendered videos and recorded trajectories (derived from CC BY-NC-ND LAFAN1 motions)
 *.mp4
 *.npz
-# generated simulation scenes and render logs
-results/**/*.mjb
-results/**/*.log
+# generated results stay local; keep reproduction scripts and documentation
+/results/**
+!/results/**/
+!/results/**/*.py
+!/results/**/README.md
 results/analysis/
 # third-party paper
 *.pdf
