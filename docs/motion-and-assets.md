@@ -77,6 +77,43 @@ print("10-frame goal:", tuple(motion.goal(motion.clip_start, 10).shape))
 PY
 ```
 
+### PA-HOI 抱瑜伽球与大气球
+
+`data/pahoi/hold/` 保存从 Lexar `data_reviewed_torso_v1` 迁入的完整物体子集：
+yoga ball 15 个尺寸版本、big balloon 18 个尺寸版本，共 5535 帧；每个源片段包含
+原尺寸、0.85、0.74 三档。原始轨迹、接触任务、几何触觉、物体/机器人资产和来源记录
+均保留，本地读取不依赖外置盘。`episodes.csv` 是索引，`manifest.json` 记录文件哈希。
+
+标准动作在 `data/motions/hold/<episode_id>.npz`，包含 G1、物体轨迹、内嵌网格和
+三列 `contact_*` 字段。转换保留 30 Hz 原帧率、源时间戳和全部帧，不重复贴地或缩放。
+此前演示使用 yoga ball `1_273__s0p85` 和 balloon `1_241__s0p85`，对应视频在
+`data/pahoi/hold/previews/`。
+
+```bash
+uv run python -m motion_data.converters.pahoi
+uv run python tools/replay_motion.py data/motions/hold/1_273__s0p85.npz
+uv run python tools/replay_motion.py data/motions/hold/1_241__s0p85.npz
+uv run python data/pahoi/hold/reader.py data/pahoi/hold --verify
+```
+
+原始 episode 中的接触信息有两类：
+
+| 文件 | 逐帧字段 | 含义 |
+|---|---|---|
+| `contact_task.npz` | `active`、`weight`：`(T,3)`；`target_object`、`normal_object`：`(T,3,3)` | 左手、右手、前胸腹的优化任务，顺序由 `patch_ids` 标识；不是接触成功标签 |
+| `tactile.npz` | `geometric_contact`、`surface_distance_m`：`(T,464)` | 原内臂布局的逐点几何接触及表面距离 |
+| `tactile.npz` | `channel_geometric_contact`、`channel_surface_distance_m`：`(T,112)` | 逐通道任一成员接触、成员最小距离 |
+
+标准 NPZ 保留 `contact_task.npz` 的全部字段并加 `contact_` 前缀；完整触觉时序保留在
+原始 episode，标准文件的 `source_episode` 给出相对仓库根目录的位置。inactive 目标
+可能为 NaN，读取时应用 `contact_active` 掩码。几何接触使用 4 mm 阈值并记录内部点；
+内部穿插不能等同于有效接触。这些字段均不是力、压力或硬件 counts。
+
+原始 `gmr_reference.npz` 是优化前的动作；其中的贴地量只用于显示原始 GMR，不能叠加到
+优化后的 `motion.npz`。人工 keep、优化后人工验收标志和数值 QC 分别保存在 metadata，
+迁移未改变这些状态。此处提供运动学 reference，抱球动力学训练任务需另行实现。
+数据沿用仓库 `/data` 忽略规则，不进入 Git；字段详情见 `data/pahoi/hold/FORMAT.md`。
+
 ### 碰撞几何检查
 
 G1 模型已移除左右 `rubber_hand` 的视觉和碰撞几何，当前不建模手部接触。

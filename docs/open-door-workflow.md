@@ -5,7 +5,8 @@ Runner、Replay、PD 控制和 reference clock；网络复用 Tracking 的 MLP�
 控制 50 Hz、物理 200 Hz、10 帧历史、10 帧未来目标。门是被动铰链，没有 actuator。
 
 右侧躯干／肩／前臂开门是独立的OpenDoorSide任务，见[侧面工作流](open-door-side-workflow.md)。
-背部JSON默认显式选择video1，侧面JSON显式选择video6，避免同目录自动混合两种奖励语义。
+无触觉背部JSON显式选择video7→video1→video8完整reference，触觉JSON仍选择video1，
+侧面JSON选择video6，避免同目录自动混合不同实验。
 
 ## 数据适配
 
@@ -22,10 +23,12 @@ Runner、Replay、PD 控制和 reference clock；网络复用 Tracking 的 MLP�
 同名源数据/XML更新或旧输出缺少来源哈希时会明确报错，更新时用 `--overwrite`。
 任务默认读取 `data/motions/open_door_prepared`，XML默认取第一条NPZ的同名文件。
 
-当前prior为G1首帧heading对齐门面的版本（`door_alignment_reference` 标记）：
-机器人root位置/朝向已更新，首帧水平yaw与关闭门的+X方向一致；保留原roll/pitch。
-关节轨迹、门角曲线和245帧@30Hz时序未改变。转换保留用户的轨迹，包括末帧约10.88cm
-的参考背点间隙，不重新拟合朝向或修改奖励。`archive/` 为历史副本，loader不递归加载。
+当前无触觉expert使用 `video7_then_video1_then_video8_g1_door_cycle_asset.npz`：
+805帧@30Hz，依次走近、背部开门、横移、转身离开。原video1的245帧保留，
+前后分别插入1.2秒和0.8秒姿态过渡；video8侧步期间增加34cm横移净空。
+第624帧（20.8秒）释放门，按同名XML的名义弹簧、阻尼和摩擦模拟无主动外力回关，
+第639帧（21.3秒）关闭。机器人运动与拼接仍是运动学参考，可能滑脚。
+`archive/` 为历史副本，loader不递归加载。
 
 ```bash
 .venv/bin/python -m motion_data.converters.gmr \
@@ -35,10 +38,11 @@ Runner、Replay、PD 控制和 reference clock；网络复用 Tracking 的 MLP�
 这版是一个固定门资产：宽0.55m、厚0.04m、高1.8m、−Z铰链，闭门 yaw=0。
 多条reference必须有相同门几何和位置。物性默认8kg、阻尼5、铰链摩擦0.5、
 机器人–门摩擦0.7、弹簧刚度20、参考角−0.1；可通过command配置调整。
-机器人摩擦、关节标定和COM随机化复用Tracking。
+完整reference的回关速度对应这组名义物性，因此 `open_door.json` 关闭门物性随机化。
+机器人摩擦、关节标定和COM随机化仍复用Tracking。
 
-`DoorMotionLib` 使用机器人loader的同一个采样时钟：245帧@30Hz成为407帧@50Hz，
-末控制时刻8.12s，不外推到源数据末时刻之外。门角插值后重新求角速度，各clip独立差分。
+`DoorMotionLib` 使用机器人loader的同一个采样时钟：805帧@30Hz成为1341帧@50Hz，
+末控制时刻26.8s；episode上限为30秒。门角插值后重新求角速度，各clip独立差分。
 机器人和门在同一参考帧初始化，包含root/joint/hinge的速度；其后门由真实物理推动，
 不会在每一步强制写入reference角度。诊断contact mask不作为接触力标签或奖励真值。
 
@@ -73,7 +77,7 @@ Actor没有特权物性；没有PointNet、learned geometry、额外task memory�
 ### 带触觉的背部 expert
 
 [`configs/open_door_tactile.json`](../configs/open_door_tactile.json) 是独立的背部开门实验。
-它沿用 `open_door.json` 的训练和任务配置，将环境数设为单卡2048，使用独立的
+它保留原video1参考、10秒episode和门物性随机化，环境数设为单卡2048，使用独立的
 `training.run_name`，并增加
 `task.use_tactile`、`tactile_layout`、`tactile_contact_distance_m`、
 `tactile_counts_full_scale_depth_m`、`tactile_counts_exponent` 五个触觉选项。
@@ -472,21 +476,24 @@ CUDA_VISIBLE_DEVICES=1,2 ITERATIONS=10000 ./run_open_door.sh \
 仓库 `/home/wangfeng/supermimic_vibed` 的 `logs` 已是软链接，指向
 `/data/wangfeng/supermimic_vibed/logs`。下面的命令使用该软链接保存终端日志、
 TensorBoard、CSV和checkpoint，数据则读取服务器上已同步的新版prepared目录。
-`data/` 被Git忽略；仅同步代码不会复制轨迹，命令显式指定现有数据位置。
+`data/motions/open_door_prepared` 链接到 `/data/wangfeng/supermimic_vibed/data/motions/open_door_prepared`，
+新reference的NPZ、同名XML和元数据已成套同步；本地与CUHK使用相同JSON相对路径。
+配套XML包含两侧静态碰撞墙，每侧长3m、高2.4m、厚0.12m，门两端各留22mm转动间隙。
+当前reference有141/805帧与墙重叠，自适应RSI可能抽到重叠初态。
+在Slurm分配内训练，并保留Slurm设置的GPU可见性：
 
 ```bash
 cd /home/wangfeng/supermimic_vibed
-mkdir -p logs/launch
-set -o pipefail
-CUDA_VISIBLE_DEVICES=1,2 OMP_NUM_THREADS=4 \
-SUPERMIMIC_MOTION_DIR=/data/wangfeng/supermimic_open_door_tracking/data/motions/open_door_prepared \
-./run_open_door.sh --config configs/open_door.json \
-  2>&1 | tee "logs/launch/open_door_dr_$(date +%Y%m%d_%H%M%S).log"
+mkdir -p logs/slurm
+sbatch --account=interns --partition=gpu --nodes=1 --ntasks=1 --gres=gpu:a100:1 \
+  --cpus-per-task=8 --mem=32G --time=24:00:00 \
+  --job-name=door-walls-expert --output=logs/slurm/%x-%j.out \
+  --wrap='OMP_NUM_THREADS=8 PYTHONUNBUFFERED=1 srun --ntasks=1 .venv/bin/python -u -m supermimic.scripts.train_open_door --config configs/open_door.json'
 ```
 
-模型与训练曲线目录为 `logs/rsl_rl/supermimic_open_door/<时间戳>_back_tracking_dr_rsi/`，
+模型与训练曲线目录为 `logs/rsl_rl/supermimic_open_door/<时间戳>_back_door_cycle_walls_rsi/`，
 实际位于 `/data/wangfeng/supermimic_vibed/logs/rsl_rl/supermimic_open_door/`。
-默认JSON从头训练，使用schema2的门随机化和自适应RSI；不加载旧固定门参数checkpoint。
+默认JSON从头训练，关闭触觉，使用名义门物性和自适应RSI；每卡1024环境，batch各512，10000轮。
 环境数、batch、总迭代等直接改JSON，无需修改这条启动命令。
 
 旧运行的显存快照（每卡1024环境、WM/Actor batch各512、Replay256步、horizon32）：

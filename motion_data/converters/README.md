@@ -6,6 +6,7 @@
 uv run --extra motion python -m motion_data.converters.grail data/grail/sitting data/motions/sitting
 uv run python -m motion_data.converters.lafan1 data/lafan1_g1 data/motions/lafan1 --fps 30
 uv run python -m motion_data.converters.gmr data/motions/open_door data/motions/open_door_prepared
+uv run python -m motion_data.converters.pahoi data/pahoi/hold data/motions/hold
 ```
 
 转换器默认跳过已有文件，`--overwrite` 重新转换；GMR只跳过来源哈希相同的完整输出对。
@@ -20,6 +21,13 @@ GMR 接受一个 NPZ 或包含同名 NPZ/XML 的目录，输出到独立目录�
 输出记录 `source_name`、`source_sha256` 和 `source_xml_sha256`。
 `door_contact_mask` 是几何诊断，不是物理接触标签。训练时使用 `DoorMotionLib`
 在机器人同一时钟上重采样门角度并重新计算门角速度，形成每帧 75 维 future goal。
+
+PA-HOI 读取 reviewed 数据集的 `manifest.json`，按 episode ID 输出 NPZ。保留源 FPS、
+时间戳和三列双手/前胸腹任务（`contact_` 前缀），按名字绑定完整 G1 29 关节，内嵌物体网格。
+原 Stage2 已贴地、网格已烘焙尺寸，因此不再贴地或缩放，`object_scale` 固定为 1。
+`source_episode` 给出相对项目根的原始 episode 路径，完整几何触觉仍保存在该目录；
+`source_sha256`、`source_metadata_sha256`、`source_mesh_sha256` 记录转换输入。
+任务字段是优化目标/几何诊断，不是物理接触力；转换不会自动建立抱球训练任务。
 
 新增来源时，在此目录添加 `<source>.py`，完成来源解析、单位与坐标系转换、
 四元数顺序转换及目标机器人关节映射，再调用 `motion_data.save_motion(path, clip)`。

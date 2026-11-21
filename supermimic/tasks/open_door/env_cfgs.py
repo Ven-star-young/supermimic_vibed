@@ -51,5 +51,5 @@ def make_env_cfg(play=False):
     baseline.commands["motion"] = command
     baseline.scene.entities["robot"] = make_g1_robot_cfg(interaction_collisions=True)
     baseline.scene.sensors += (G1TactileSensorCfg(
-        name="tactile", robot_entity="robot", target_entity="door"),)
+        name="tactile", robot_entity="robot", target_entity="door", geom_name="door_panel"),)
     return DoorEnvCfg(**vars(baseline))

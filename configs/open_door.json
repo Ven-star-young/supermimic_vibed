@@ -4,7 +4,7 @@
     "iterations": 10000,
     "gpu_ids": "all",
     "log_root": "logs/rsl_rl",
-    "run_name": "back_tracking_dr_rsi",
+    "run_name": "back_door_cycle_walls_rsi",
     "seed": 0,
     "wm_batch": 512,
     "pi_batch": 512,
@@ -33,8 +33,9 @@
     "load_checkpoint": "model_.*.pt"
   },
   "task": {
-    "motion_dir": "data/motions/open_door_prepared/video1_g1_door_video45_centered_asset.npz",
+    "motion_dir": "data/motions/open_door_prepared/video7_then_video1_then_video8_g1_door_cycle_asset.npz",
     "door_xml": null,
+    "use_tactile": false,
     "history_length": 10,
     "goal_frames": 10,
     "sampling_mode": "adaptive",
@@ -119,7 +120,7 @@
     "robot_door_friction": 0.7,
     "door_spring_reference": -0.1,
     "door_randomization_cfg": {
-      "enabled": true,
+      "enabled": false,
       "mass": [
         5.0,
         15.0
@@ -170,6 +171,6 @@
       "calibration_start": 1,
       "com_start": 30
     },
-    "episode_length_s": 10.0
+    "episode_length_s": 30.0
   }
 }
