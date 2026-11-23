@@ -15,6 +15,7 @@ Sitting10000全量扰动评估（105椅×10 seeds）：`logs/cuhk_eval_10000_per
 侧面最终评估、训练CSV及来源：上述侧面模型目录。
 
 最终干净版视频及全部重渲染素材：`results/sitting_open_door_montage/`，主视频为 `sitting_back_side_clean.mp4`。Sitting九宫格为8600轮策略；这不改变10000轮评估的模型来源。
+`results/` 中的素材、说明和重渲染脚本仅在本地保留，不随 Git 提交。
 
 ## 本地播放
 

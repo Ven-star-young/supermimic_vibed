@@ -39,3 +39,8 @@ Z 向上世界坐标和 wxyz 四元数，`joint_names` 与 `joint_pos` 的列一
 当前训练要求数据已重定向到 G1 的完整 29 个关节，只调整列顺序不等于机器人重定向。
 新来源满足该契约后，无需修改 `MotionLib`、策略、奖励或回放器。物体姿态和网格可保存在
 NPZ 中供回放；它们目前不会自动加入训练场景或提供椅子碰撞支撑。
+
+Kimodo 原生G1导出使用 `kimodo.py` 导入：CSV为 `xyz + wxyz + 29关节`（与LAFAN1的
+四元数列顺序不同），必须同时提供包含FPS、关节名、世界XY偏移和逐帧门角的JSON，以及
+现有门NPZ/XML模板。导入只做格式转换；生成约束与几何修正由
+[tools/generate_kimodo_door.py](../../tools/generate_kimodo_door.py) 提供。

@@ -16,6 +16,8 @@ from .motion import SittingMotionLib
 
 
 class SittingTask(TrackingTask):
+    task_name = "g1_sitting"
+
     def make_policy(self, history_length, goal_frames, geometry_bank):
         return SittingPolicy(geometry_bank, history_length=history_length, goal_frames=goal_frames)
 
@@ -66,7 +68,8 @@ class SittingTask(TrackingTask):
         }
 
 
-def build_task(motion_dir=None, *, device="cuda:0", play=False, motion=None, kin=None, cfg=None, files=None):
+def build_task(motion_dir=None, *, device="cuda:0", play=False, motion=None, kin=None, cfg=None, files=None,
+               task_cls=SittingTask):
     if cfg is None:
         from .env_cfgs import make_env_cfg
         cfg = make_env_cfg(play)
@@ -92,6 +95,7 @@ def build_task(motion_dir=None, *, device="cuda:0", play=False, motion=None, kin
         control_dt=cfg.sim.mujoco.timestep * cfg.decimation,
         object_reward_cfg=getattr(command, "object_reward_cfg", None),
     )
-    return SittingTask(
-        "g1_sitting", motion, mdp, SittingDynamics(), cfg, modeled_entities=("robot", "chair"),
+    return task_cls(
+        task_cls.task_name, motion, mdp, SittingDynamics(), cfg,
+        modeled_entities=("robot", command.object_entity_name),
     )

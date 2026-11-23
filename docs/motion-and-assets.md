@@ -111,8 +111,59 @@ uv run python data/pahoi/hold/reader.py data/pahoi/hold --verify
 
 原始 `gmr_reference.npz` 是优化前的动作；其中的贴地量只用于显示原始 GMR，不能叠加到
 优化后的 `motion.npz`。人工 keep、优化后人工验收标志和数值 QC 分别保存在 metadata，
-迁移未改变这些状态。此处提供运动学 reference，抱球动力学训练任务需另行实现。
+迁移未改变这些状态。reference 的动力学可行性和训练后的抱持表现需独立评估。
 数据沿用仓库 `/data` 忽略规则，不进入 Git；字段详情见 `data/pahoi/hold/FORMAT.md`。
+
+### YogaBall 任务
+
+任务 ID 为 `Mjlab-SuperMimic-YogaBall-Unitree-G1`，默认单条 reference 为
+`1_273__s0p85.npz`。注册不加载数据，创建环境时再读取轨迹和配套资产；
+运行依赖仓库内 `data/motions/hold/` 与 `data/pahoi/hold/`，不依赖 Lexar 原路径。
+可将 `--env.commands.motion.motion-dir` 指向另一条瑜伽球 NPZ；首版每个运行只用一种尺寸、
+一段 reference，目录或 Balloon 文件会明确报错。
+
+```bash
+# JSON 加载和最终参数检查，不创建仿真或训练
+./run_yogaball.sh --check
+# 使用 configs/yogaball.json；也可用 --config 指定另一份 JSON
+./run_yogaball.sh
+# 临时覆盖 JSON；GPU、环境变量和 CLI 约定与 run_open_door.sh 相同
+CUDA_VISIBLE_DEVICES=0 ./run_yogaball.sh --env.scene.num-envs 256 --agent.pi-lr 0.0001
+# 原生环境查看（零动作，不代表训练后的策略）
+uv run play Mjlab-SuperMimic-YogaBall-Unitree-G1 --agent zero --num-envs 1 --viewer native
+# 纯运动学 reference 回放仍使用原有工具
+uv run python tools/replay_motion.py data/motions/hold/1_273__s0p85.npz
+```
+
+`configs/yogaball.json` 沿用 OpenDoor 的 `training` / `task` 结构，由
+`python -m supermimic.scripts.train_yogaball` 读取；`run_yogaball.sh` 复用已有启动脚本。
+默认每卡128环境、WM/Actor batch各128、10000轮，先进行500轮仅 WM 更新。
+`training.lr` 为 WM/Critic 学习率，`training.pi_lr=null` 时 Actor 也使用它。
+`task.reward_cfg` 为机器人奖励，`task.object_reward_cfg` 为球位姿奖励；
+`task.reset_cfg`、`observation_cfg`、`physical_cfg` 分别控制机器人初始化扰动、观测噪声和物性随机化。
+`task.object_physical_cfg.mass` / `robot_friction` 是训练时每次 reset 的采样范围，
+两端相等表示固定值；`evaluation_mass` / `evaluation_robot_friction` 是名义建模与 play 值。
+例如要统一使用2kg球，应将 `mass` 设为 `[2.0, 2.0]`，并将 `evaluation_mass` 设为 `2.0`。
+原生 `train` / `play` 仍使用注册默认值，不自动读取此 JSON。
+
+场景为 `robot`＋`ball`，球有六自由度、重力及机器人／地面碰撞，reset 同步写入机器人和球的
+reference 位姿及速度，之后由物理推进。球使用迁入的原网格与 3 个原凸部件，缩放已烘焙；
+不伪装成椅子的 CoACD 缓存。球质量默认固定 1 kg，机器人／球和球／地面摩擦均为 1，
+惯量按原网格均匀密度近似；这些是可配置的未标定仿真值，非源数据的实测物性。
+JSON 中的物性参数在 `task.object_physical_cfg`，物体跟踪权重与误差尺度在
+`task.object_reward_cfg`；CLI 对应 `--env.commands.motion.object-physical-cfg.*`
+和 `--env.commands.motion.object-reward-cfg.*`。
+
+模型和优化接口复用 Sitting：state84、context46、每帧 observation102、action29；
+机器人和球在同一 50 Hz 时钟上重采样（本段 186 帧 @30 Hz → 309 帧 @50 Hz）。
+Actor 使用机器人本体、当前球相对位姿、机器人未来 goal 和物体几何；Critic 额外使用球的
+未来 reference。奖励为原机器人跟踪项＋球位置／朝向跟踪，真实环境和想象 rollout 共用
+同一函数。终止条件沿用机器人跟踪失败、reference 完成与超时。
+
+任务名 `g1_yogaball`、实验目录 `logs/rsl_rl/supermimic_yogaball/` 独立，拒绝 Sitting
+checkpoint。现有全库评估器可以记录球的实际与参考轨迹，不能使用 Sitting 的坐下成功判据。
+本阶段不消费接触标签、不增加接触奖励或触觉策略输入，也不代表已经学会稳定抱持。
+共享 G1 仍未建模 rubber hand 掌部碰撞；原双手任务锚点的物理承托需后续单独适配。
 
 ### 碰撞几何检查
 

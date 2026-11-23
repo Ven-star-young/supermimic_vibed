@@ -19,6 +19,7 @@ def geometry_id(env, command_name="motion"):
 
 @dataclass(kw_only=True)
 class SittingCommandCfg(MotionCommandCfg):
+    object_entity_name: str = "chair"
     motion_files: tuple[str, ...] = ()
     object_motion_file: str | None = None
     collision_cache_dir: str = str(DEFAULT_CACHE_DIR)
@@ -31,10 +32,12 @@ class SittingCommandCfg(MotionCommandCfg):
 
 
 class SittingCommand(MotionCommand):
+    asset_loader = staticmethod(selected_asset)
+
     def __init__(self, cfg, env):
         super().__init__(cfg, env)
         self.geometry_bank = GeometryBank()
-        asset = selected_asset(cfg)
+        asset = self.asset_loader(cfg)
         self.xi[:, 45] = self.geometry_bank.add(asset.key, asset.points, asset.extent)
         self.task.geometry_keys = tuple(self.geometry_bank.keys)
 
@@ -45,7 +48,7 @@ class SittingCommand(MotionCommand):
     def reset_reference(self, env_ids):
         super().reset_reference(env_ids)
         position, rotation, velocity, angular_velocity = self.motion.object_ref_state(self.time_steps[env_ids])
-        chair = self.scene["chair"]
+        chair = self.scene[self.cfg.object_entity_name]
         pose = torch.cat((position + self.scene.env_origins[env_ids], mat_to_quat(rotation)), -1)
         chair.write_root_link_pose_to_sim(pose, env_ids=env_ids)
         chair.write_root_link_velocity_to_sim(torch.cat((velocity, angular_velocity), -1), env_ids=env_ids)

@@ -47,7 +47,7 @@ class SittingDynamics:
     @staticmethod
     def read_sim_state(command):
         robot = G1Dynamics.read_sim_state(command)
-        data = command.scene["chair"].data
+        data = command.scene[command.cfg.object_entity_name].data
         return (*robot, data.root_link_pos_w.clone() - command.scene.env_origins,
                 quat_to_mat(data.root_link_quat_w.clone()),
                 data.root_link_lin_vel_w.clone(), data.root_link_ang_vel_w.clone())

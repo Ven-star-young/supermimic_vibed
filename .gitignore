@@ -18,11 +18,7 @@ logs/
 # rendered videos and recorded trajectories (derived from CC BY-NC-ND LAFAN1 motions)
 *.mp4
 *.npz
-# generated results stay local; keep reproduction scripts and documentation
-/results/**
-!/results/**/
-!/results/**/*.py
-!/results/**/README.md
-results/analysis/
+# generated results stay local
+/results/
 # third-party paper
 *.pdf

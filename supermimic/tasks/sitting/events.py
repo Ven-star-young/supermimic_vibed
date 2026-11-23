@@ -30,7 +30,7 @@ def randomize_object_physics(env, env_ids=None, command_name="motion"):
     cmd = env.command_manager.get_term(command_name)
     cfg, sim = cmd.cfg.object_physical_cfg, env.sim
     ids = torch.arange(env.num_envs, device=env.device) if env_ids is None else env_ids
-    chair = env.scene["chair"]
+    chair = env.scene[cmd.cfg.object_entity_name]
     body = chair.indexing.root_body_id
     sample = lambda limits: torch.empty(len(ids), device=env.device).uniform_(*limits)
     mass = (torch.full((len(ids),), cfg.evaluation_mass, device=env.device)

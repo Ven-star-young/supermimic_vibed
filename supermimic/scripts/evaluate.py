@@ -50,7 +50,7 @@ def _record_state(trajectory, command, alive, state=None):
     state = command.state() if state is None else state
     values = dict(root_p=state[0], root_quat=mat_to_quat(state[1]), q=state[4],
                   f=command.time_steps, alive=alive)
-    if "chair" in command.scene.entities:
+    if hasattr(command.motion, "object_ref_state"):
         values.update(object_p=state[6], object_quat=mat_to_quat(state[7]))
     if "door" in command.scene.entities:
         values.update(theta=state[6].squeeze(-1), omega=state[7].squeeze(-1))
@@ -77,7 +77,7 @@ def evaluate(env, runner, record=None, metrics=None):
     failed = torch.zeros_like(finished)
     completed = torch.zeros_like(finished)
     trajectory = {}
-    object_enabled = "chair" in command.scene.entities
+    object_enabled = hasattr(motion, "object_ref_state")
     door_enabled = "door" in command.scene.entities
     if door_enabled:
         door_error = torch.zeros(native.num_envs, 2, device=native.device)
@@ -231,7 +231,8 @@ def score_checkpoint(path: Path, args):
         from supermimic.tasks.sitting.assets import select_motion_files
         cfg.scene.num_envs = len(select_motion_files(cfg.commands["motion"]))
     else:
-        cfg.scene.num_envs = len(list(Path(cfg.commands["motion"].motion_dir).glob("*.npz")))
+        motion_path = Path(cfg.commands["motion"].motion_dir)
+        cfg.scene.num_envs = 1 if motion_path.is_file() else len(list(motion_path.glob("*.npz")))
     if not cfg.scene.num_envs:
         raise ValueError(f"No standard motion NPZ files found in {cfg.commands['motion'].motion_dir}")
     native = ManagerBasedRlEnv(cfg, device=args.device)

@@ -96,6 +96,34 @@ CPU Replay存当前帧float16深度，取样时转回float32并重新通过当�
 原3072环境的采样/优化参数保持原值；开启相机后全规模GPU渲染占用需另行测量，
 本地小规模验证不代表3072相机已通过显存测试。
 
+### Kimodo完整reference的10k教师：仅深度视觉学生
+
+[`configs/open_door_dagger_kimodo_depth.json`](../../../configs/open_door_dagger_kimodo_depth.json)
+使用CUHK作业1218的 `2026-11-22_21-53-59_back_door_cycle_walls_rsi/model_10000.pt`，
+reference为 `data/motions/kimodo_back_door_cycle/kimodo_back_door_cycle.npz`。
+教师没有触觉输入，因此 `expert_observation_dim=102`；学生设置
+`use_depth=true`、`use_tactile=false`，只接收本体历史、goal及当前深度图。
+沿用3072环境、16轮、batch1024、容量300000、学习率2e-4及原beta schedule。
+输出目录为 `logs/open_door_dagger_kimodo_depth_teacher10000/`。
+
+这份配置沿用当前DAgger的adaptive RSI与10秒采集episode，随机参考起点可覆盖完整
+27.27秒reference；它不是每回合从首帧连续执行完整动作。触觉传感器仍保留用于现有采集
+诊断，但学生无触觉编码器且不消费触觉输入。深度Replay估算13.26GiB。
+已通过配置解析、teacher/门资产兼容、相机配置及CPU学生前向验证；未启动训练，
+3072环境的实际GPU渲染显存尚未验证。
+
+在CUHK项目根目录启动，清除旧teacher/reference环境覆盖后使用现有Slurm脚本：
+
+```bash
+cd /home/wangfeng/supermimic_vibed
+env -u SUPERMIMIC_EXPERT_CHECKPOINT -u SUPERMIMIC_MOTION_DIR \
+  sbatch --job-name=door-kimodo-depth tools/distill_open_door.sbatch \
+  configs/open_door_dagger_kimodo_depth.json
+```
+
+脚本在所选输出目录下添加`slurm-<job_id>`；teacher路径按CUHK项目布局填写，
+本地同源10k完整checkpoint已归档在Lexar。
+
 ### 侧面开门 counts-only 学生
 
 使用 [侧面配置](../../../configs/open_door_side_dagger_tactile_counts_only.json)：

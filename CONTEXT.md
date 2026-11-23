@@ -1,9 +1,17 @@
 # Task-specific learning contracts
 
 This branch trains a separate Actor, World Model and Critic per task family.
-Tracking, Sitting, OpenDoor and OpenDoorSide share optimization machinery, not model parameters or a cross-task
+Tracking, Sitting, YogaBall, OpenDoor and OpenDoorSide share optimization machinery, not model parameters or a cross-task
 state schema. Sitting contains exactly G1 + one free rigid chair per environment.
 Different worlds may use different native chair variants and matching references.
+YogaBall contains G1 + one free rigid ball and reuses Sitting's rigid-object state,
+models and pose reward with its own task/checkpoint identity. The command names
+the object entity (`chair` by default, `ball` for YogaBall); reset, physics context
+and simulation state reads use that same entity. YogaBall selects one reviewed
+PA-HOI yoga-ball NPZ and its original convex parts, with no data I/O at registration.
+Its initial scope is robot/object trajectory tracking, without contact rewards or
+tactile policy inputs. Ball mass defaults to an uncalibrated fixed1kg; the original
+hand/torso task labels and geometric tactile arrays remain in the dataset.
 OpenDoor tracks a synchronized G1 and passive -Z hinge reference using fixed door geometry
 and randomized door physics; it has no PointNet or task memory. Source adaptation lives
 in motion_data/converters/gmr.py.

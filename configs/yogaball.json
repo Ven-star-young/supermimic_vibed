@@ -1,0 +1,152 @@
+{
+  "training": {
+    "num_envs": 128,
+    "iterations": 10000,
+    "gpu_ids": "all",
+    "log_root": "logs/rsl_rl",
+    "run_name": "yogaball_tracking_rsi",
+    "seed": 0,
+    "wm_batch": 128,
+    "pi_batch": 128,
+    "buffer_steps": 256,
+    "warmup_steps": 64,
+    "wm_only_iters": 500,
+    "wm_window": 8,
+    "horizon": 32,
+    "wm_batches": 10,
+    "critic_epochs": 5,
+    "critic_minibatches": 4,
+    "utd": 0.4,
+    "lr": 0.0002,
+    "pi_lr": null,
+    "gamma": 0.99,
+    "lam": 0.95,
+    "lr_decay_iters": 250000,
+    "action_noise": 0.1,
+    "no_critic": false,
+    "amp": "bf16",
+    "no_compile": false,
+    "save_interval": 200,
+    "log_every": 10,
+    "logger": "tensorboard",
+    "resume": false,
+    "load_run": ".*",
+    "load_checkpoint": "model_.*.pt"
+  },
+  "task": {
+    "motion_dir": "data/motions/hold/1_273__s0p85.npz",
+    "object_entity_name": "ball",
+    "history_length": 10,
+    "goal_frames": 10,
+    "sampling_mode": "adaptive",
+    "uniform_weight": 0.5,
+    "current_weight": 0.4,
+    "history_weight": 0.1,
+    "temperature": 25.0,
+    "history_update": 0.001,
+    "return_update": 0.2,
+    "reset_noise": true,
+    "reset_cfg": {
+      "position": [
+        0.05,
+        0.05,
+        0.01
+      ],
+      "rotation": [
+        0.1,
+        0.1,
+        0.2
+      ],
+      "linear_velocity": [
+        0.5,
+        0.5,
+        0.2
+      ],
+      "angular_velocity": [
+        0.52,
+        0.52,
+        0.78
+      ],
+      "joint_position": 0.1
+    },
+    "observation_cfg": {
+      "joint_position_noise": 0.01,
+      "joint_velocity_noise": 0.5,
+      "angular_velocity_noise": 0.2,
+      "gravity_noise": 0.05
+    },
+    "termination_cfg": {
+      "height": 0.25,
+      "tilt": 0.8,
+      "height_temperature": 0.02,
+      "tilt_temperature": 0.04
+    },
+    "reward_cfg": {
+      "body_pos_std": 0.3,
+      "body_ori_std": 0.4,
+      "body_linvel_std": 1.0,
+      "body_angvel_std": 3.14,
+      "root_pos_std": 0.3,
+      "root_ori_std": 0.4,
+      "w_action_rate": -0.1,
+      "w_joint_limit": -2.0,
+      "soft_limit_factor": 0.9,
+      "term_height": 0.25,
+      "term_tilt": 0.8,
+      "w_body_pos": 1.0,
+      "w_body_ori": 1.0,
+      "w_body_linvel": 1.0,
+      "w_body_angvel": 1.0,
+      "w_root_pos": 0.5,
+      "w_root_ori": 0.5
+    },
+    "object_reward_cfg": {
+      "weight": 1.0,
+      "position_std": 0.1,
+      "orientation_std": 0.4
+    },
+    "object_physical_cfg": {
+      "mass": [
+        1.0,
+        1.0
+      ],
+      "evaluation_mass": 1.0,
+      "robot_friction": [
+        1.0,
+        1.0
+      ],
+      "evaluation_robot_friction": 1.0,
+      "ground_friction": 1.0
+    },
+    "physical_cfg": {
+      "entity_name": "robot",
+      "torso_body": "torso_link",
+      "friction": [
+        0.3,
+        1.2
+      ],
+      "evaluation_friction": 1.0,
+      "com_ranges": [
+        [
+          -0.025,
+          0.025
+        ],
+        [
+          -0.05,
+          0.05
+        ],
+        [
+          -0.05,
+          0.05
+        ]
+      ],
+      "joint_offset": [
+        -0.01,
+        0.01
+      ],
+      "calibration_start": 1,
+      "com_start": 30
+    },
+    "episode_length_s": 10.0
+  }
+}

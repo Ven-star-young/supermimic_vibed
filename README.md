@@ -47,6 +47,7 @@ supermimic/tasks/g1_tracking/  Tracking网络与任务
 supermimic/tasks/sitting/      Sitting网络、动力学、场景和混合椅型实验
 supermimic/tasks/open_door/    G1＋被动铰链轨迹跟踪，复用Tracking网络与Runner
 supermimic/tasks/open_door_side/ 右侧躯干／肩／前臂开门，独立奖励和checkpoint
+supermimic/tasks/yogaball/     G1＋自由刚体瑜伽球的同步轨迹跟踪
 supermimic/scripts/            train_sitting / play_policy / evaluate
 ```
 
@@ -67,6 +68,26 @@ tools/download_data.sh
 [lvhaidong/LAFAN1_Retargeting_Dataset](https://huggingface.co/datasets/lvhaidong/LAFAN1_Retargeting_Dataset)
 （动作：Ubisoft La Forge CC BY-NC-ND 4.0；机器人资产：Unitree BSD-3-Clause）。
 已有 `data/motions/sitting/` 和 `data/collisions/chairs/` 可直接使用，无需重新转换。
+
+## 瑜伽球轨迹跟踪
+
+已注册 `Mjlab-SuperMimic-YogaBall-Unitree-G1`，默认使用
+`data/motions/hold/1_273__s0p85.npz`。每个环境包含一个 G1 和一个自由刚体球，
+复用 Sitting 的机器人／物体状态、模型和位姿跟踪奖励，单独训练和保存 checkpoint。
+
+```bash
+uv run list-envs --keyword YogaBall
+./run_yogaball.sh --check
+./run_yogaball.sh
+```
+
+参数集中在 [configs/yogaball.json](configs/yogaball.json)，格式与 OpenDoor 相同：
+`training` 调整环境数、batch、学习率和轮数，`task` 调整 reference、奖励、物性和随机化。
+默认每卡128个环境、WM/Actor batch各128、10000轮；命令行选项可覆盖 JSON。
+
+本阶段为机器人＋球的轨迹跟踪，接触标签保留在数据中，未加入接触奖励或触觉策略输入。
+球的名义质量暂设为 1 kg，使用原始三块凸碰撞几何；这是一组未标定的刚体仿真参数。
+数据、回放与参数说明见 [YogaBall 任务](docs/motion-and-assets.md#yogaball-任务)。
 
 ## 坐椅子训练
 
