@@ -135,8 +135,8 @@ is unchanged. `door_randomization_cfg.enabled=False` uses nominal physics in tra
 OpenDoorSide is a separate task (g1_open_door_side), with its own registration,
 reward config, experiment directory and checkpoint semantics. It reuses OpenDoor
 state/dynamics/models/DR/RSI. Allowed contact is the right torso patch plus right
-shoulder-pitch/roll and elbow/wrist-roll shells; right upper arm and hand remain
-forbidden. Tensor rewards and physical force diagnostics share this definition.
+shoulder-pitch/roll/yaw and elbow/wrist-roll shells; the right upper arm is allowed,
+while hands remain forbidden. Tensor rewards and physical force diagnostics share this definition.
 Contact shaping uses the nearest permitted FK surface to the finite positive door
 face, torso +Y alignment, and a smooth phase from reference surface proximity.
 Permitted surfaces still receive a penetration cost beyond 3mm. Actual/imagined

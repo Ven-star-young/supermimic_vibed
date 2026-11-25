@@ -556,6 +556,47 @@ RMSE只覆盖实际执行前缀，需结合完成率阅读；完成reference本�
 非法接触的回合数（各类别法向力和>1N）。这些数据只用于诊断，不改变训练reward/done，
 也不证明全部开门力矩由背部产生。评估会从checkpoint恢复奖励及门物性参数。
 
+### 多checkpoint门物性评测
+
+使用同一组物性样本对比checkpoint，并显式指定训练reference。checkpoint的`door_asset`
+只校验几何，不能区分几何相同的不同reference。背部Kimodo cycle与旧GMR cycle不可混用。
+
+```bash
+OMP_NUM_THREADS=4 .venv/bin/python -m supermimic.scripts.evaluate \
+  --task Mjlab-SuperMimic-OpenDoor-Unitree-G1 --door-sweep \
+  --run-dir logs/Supercomputer/back_open_door/2026-11-24_14-19-37_back_door_cycle \
+  --motion-dir data/motions/kimodo_back_door_cycle/kimodo_back_door_cycle.npz \
+  --physics-config configs/open_door_kimodo_cycle.json --random-samples 128 --seed 0 \
+  --output-dir results/supercomputer_door_eval_20261124/back
+
+OMP_NUM_THREADS=4 .venv/bin/python -m supermimic.scripts.evaluate \
+  --task Mjlab-SuperMimic-OpenDoorSide-Unitree-G1 --door-sweep \
+  --run-dir logs/Supercomputer/side_open_door/2026-11-24_16-35-11_right_side_repaired_rsi \
+  --motion-dir data/motions/kimodo_side60_crossed_repaired/side60_crossed.npz \
+  --physics-config configs/open_door_right_side.json --random-samples 128 --seed 0 \
+  --output-dir results/supercomputer_door_eval_20261124/side
+```
+
+每个checkpoint运行1组标称物性、10组单参数上下界、32组五参数组合边界及128组独立均匀
+随机物性，共171个world。各checkpoint复用相同样本；随机组与边界组分别汇总，不混成一个
+成功概率。`--physics-config`只读取`task.door_randomization_cfg`的范围，忽略其中enabled；
+不传则使用checkpoint的范围。名义物性、奖励、终止条件从checkpoint恢复。
+首帧与机器人物性固定，关闭reset、观测及动作噪声，仅改变门的五种物性，springref固定。
+
+- 完整完成：从reference首帧到末帧，期间没有tracking failure；末帧发生失败也不算完成。
+- 门角度：逐时刻MAE/RMSE、最大瞬时绝对误差，以及实际最大开门角与完整reference峰值之差。
+  失败试验只统计首次终止前的真实轨迹（含终止帧），不填充或外推；同时输出完整完成子集误差。
+- 过门：骨盆从起始侧在实际墙体门洞内越过门平面，随后所有与门碰撞的机器人geom的包围球
+  都越过墙背面并留20mm余量。这是保守的全身通过判定；另记骨盆过门、曾全身通过、
+  末态仍通过及完整完成且通过。后续退回门平面会清除当前有效穿越状态。
+- 位姿：世界坐标根部位置RMSE、根部旋转测地角RMSE、29关节角RMSE、tracked bodies平均
+  位置误差及旋转RMSE；与reference按控制时刻对齐，不做时间扭曲或根部对齐。
+
+输出`protocol.json`（物性表、reference/XML/评测代码哈希）、每个checkpoint的`*_eval.json`
+与`*_trajectories.npz`及所有checkpoint的`trials.csv`、`summary.csv`。相同命令会验证身份并跳过已完成模型；
+更改reference、样本或评测代码需使用新输出目录。失败world捕获末态后仅为仿真生命周期重置，
+其后状态不再计分。此批量模式不额外采集接触力，不把通过门解释为合法部位推门的力学证明。
+
 ## 定时归档与策略视频
 
 本地配置 [`configs/open_door_monitor.json`](../configs/open_door_monitor.json) 指定SSH主机、

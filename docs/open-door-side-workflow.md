@@ -10,16 +10,24 @@ task、mdp、rl_cfg结构。共享OpenDoor的state、dynamics、网络、门资�
 编辑 [`configs/open_door_right_side.json`](../configs/open_door_right_side.json)：
 
 - `training`：每卡环境数、batch、迭代数和日志，格式与背部一致。默认1024环境、batch各512。
-- `training.wm_checkpoint`：背部第10000轮checkpoint，用于初始化侧面WM。
-- `training.wm_only_iters=0`：第1轮同时更新WM、Actor和Critic，没有单独WM预训练阶段。
-- `task.motion_dir`：默认单个 `video6_g1_door_video45_right_side_asset.npz`，自动使用同名XML。
-- `task.episode_length_s=15`：适配约12.9秒参考；参考结束仍正常终止。
+- `training.wm_checkpoint=null`：不加载背部或其他已有WM checkpoint。
+- `training.wm_only_iters=500`：先从头训练500轮WM，再进入Actor/Critic联合训练，和背部Kimodo实验一致。
+- `task.door_randomization_cfg.enabled=false`：门物性固定为标称值，与背部Kimodo配置一致；机器人原有随机化配置不变。
+- `task.motion_dir`：默认 `data/motions/kimodo_side60_hug_elbow/side60_hug_elbow.npz`，自动使用同名XML。
+- `task.episode_length_s=30`：容纳27.3秒的完整参考；参考结束仍正常终止。
 - `task.door_reward_cfg`：独立侧面奖励，具体参数如下。
+- 当前配对XML包含与背部Kimodo相同的两侧固定实体墙；过门根轨迹已直接修正，并通过门板、两墙和地面的120Hz全段穿透检查。
 
 每个选定NPZ必须有标量 `door_contact_region="right_side"`；混入背部或未标注数据会报错。
 背部任务接受旧版未标注参考，但也会拒绝明确标注为侧面的文件；环境变量覆盖目录不会绕过检查。
-继续使用已有GMR转换器，转换器保留该字段。更新源数据后重新转换prepared文件；本适配
-不改轨迹、门角或开门时间，不读取几何contact mask作为实测接触标签。
+当前默认参考在Kimodo侧面动作上重新求解双臂：双手稳定留在胸前抱物位置，右肘近端外侧在推门段贴近门面。
+沿门切向局部调整根路径以容纳抱物姿态通过门框。门开至60°，18.10秒开始回落，约18.61秒关合；
+门角仍是独立参考。120Hz检查覆盖门、两墙、地面及补充手部网格；这是运动学参考，未验证耦合动力学。
+旧侧面参考保留在 `data/motions/kimodo_side60_crossed_repaired/`，新旧模型评估应显式选取对应参考。
+新版数据、回放与验证见 [肘部抱物参考](../results/kimodo_side_reference_hug_elbow/README.md)。
+右上臂已加入合法接触集合，训练几何与实测接触分类同步生效；合法区域超过3mm的深穿透惩罚仍适用。
+旧video6实验仍使用GMR转换器
+及prepared文件；两类转换器均保留接触区域字段，不读取几何contact mask作为实测接触标签。
 右侧实验仍使用原有RSI；本次未加入初始化穿模筛选。已有仿真数值失败隔离继续有效。
 
 ## 合法接触区域
@@ -30,12 +38,16 @@ task、mdp、rl_cfg结构。共享OpenDoor的state、dynamics、网络、门资�
 |---|---|
 | 右侧上躯干 | torso/logo表面在torso坐标满足 `y < -0.04, abs(x) < 0.12, 0.02 < z < 0.35`（米） |
 | 右肩 | `right_shoulder_pitch_link`、`right_shoulder_roll_link`碰撞壳 |
+| 右上臂 | `right_shoulder_yaw_link`碰撞壳 |
 | 右前臂 | `right_elbow_link`、`right_wrist_roll_link`碰撞壳 |
-| 其余部位 | 非法，包含右上臂、腕pitch/yaw与手部、背部、左侧、腿脚及头 |
+| 其余部位 | 非法，包含腕pitch/yaw与手部、背部、左侧、腿脚及头 |
 
 各部位用实际碰撞资产的表面样本和各自FK变换，前臂距离随关节运动变化。
 每geom最多32点，torso合法/非法区域分别采样；这是有限采样的几何近似，可能漏掉样本间碰撞。
 允许接触不等于允许深穿透：合法区域超过3mm后也产生状态惩罚。
+
+接触集合进入checkpoint元数据。旧侧面checkpoint若未允许右上臂，当前版本会拒绝其普通加载、resume及Actor/WM微调；
+不会自动改写旧模型的接触语义。新定义可从头训练，或通过已有 `wm_checkpoint` 接口只迁移兼容WM。
 
 ## 奖励
 
@@ -93,7 +105,7 @@ CUDA_VISIBLE_DEVICES=1,2 ./run_open_door_side.sh
 ```bash
 cd /home/wangfeng/supermimic_vibed
 CUDA_VISIBLE_DEVICES=1,2 \
-SUPERMIMIC_MOTION_DIR=/absolute/path/video6_g1_door_video45_right_side_asset.npz \
+SUPERMIMIC_MOTION_DIR=/absolute/path/side60_crossed.npz \
 ./run_open_door_side.sh
 ```
 
@@ -103,7 +115,7 @@ SUPERMIMIC_MOTION_DIR=/absolute/path/video6_g1_door_video45_right_side_asset.npz
 ```bash
 .venv/bin/python -m supermimic.scripts.evaluate \
   --task Mjlab-SuperMimic-OpenDoorSide-Unitree-G1 \
-  --motion-dir /absolute/path/video6_g1_door_video45_right_side_asset.npz \
+  --motion-dir /absolute/path/side60_crossed.npz \
   --checkpoint-file /absolute/path/model_200.pt
 ```
 
@@ -125,30 +137,25 @@ valid不进入网络。goal编码器从侧面teacher初始化后继续训练。�
 本体、触觉、depth或触觉＋depth四种学生；默认关闭depth，开启时另设输出目录。
 DAgger使用物理仿真采集和teacher动作监督，不使用下面的WM训练初始化流程。
 
-## 使用背部世界模型初始化
+## WM从头训练
 
-侧面JSON默认选择CUHK已完成的背部训练：
+当前侧面JSON不加载已有WM checkpoint，从头训练WM：
 
 ```json
-"wm_checkpoint": "logs/rsl_rl/supermimic_open_door/2026-10-31_17-06-12_back_tracking_dr_rsi/model_10000.pt",
-"wm_only_iters": 0,
+"wm_checkpoint": null,
+"wm_only_iters": 500,
 "resume": false
 ```
 
-路径相对项目根目录，经过已有 `logs` 软链接读取 `/data`。其他机器需复制该文件或修改
-`wm_checkpoint`。显式设为 `null` 时WM从头初始化；即使这样 `wm_only_iters=0` 仍保持联合训练。
+`wm_checkpoint=null` 时不读取任何已有WM；`wm_only_iters=500` 会先进行500轮WM-only训练。
 
-初始化只加载WM网络和输入/输出归一化统计；Actor、Critic、三个优化器和迭代数从头开始。
-WM继续学习侧面采集的数据，不冻结。先填充64个仿真步的Replay，再从第1轮进行
-WM、Actor、Critic更新；填充Replay不包含任何梯度更新。
+WM、Actor、Critic、三个优化器和迭代数均从头开始。先填充64个仿真步的Replay，随后完成500轮WM-only训练，再进行WM、Actor、Critic联合更新。
 
 加载检查动力学schema、state/context语义、门资产、控制时间步、WM结构和所有张量的形状、
 类型及有限性。不同任务的reward、参考和接触定义不进入WM，所以显式迁移时允许不同；
 普通完整resume仍检查独立侧面任务的全部语义。尚未定义WM迁移接口的任务不会只凭形状相同接受文件。
 
-新checkpoint的 `world_model_initialization` 记录来源路径、SHA256、源任务及源迭代。
-以后继续侧面训练使用正常 `resume=true`；完整resume优先，不再打开背部初始化文件，
-因此原文件移动或删除也不会阻止恢复已保存的侧面模型。
+以后继续侧面训练使用正常 `resume=true`；完整resume优先。
 
 ## 从已有侧面策略微调避脚行为
 

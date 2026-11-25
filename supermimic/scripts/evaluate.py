@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
+import itertools
 import json
 from pathlib import Path
 import re
@@ -34,6 +36,11 @@ def build_parser():
     parser.add_argument("--watch", action="store_true")
     parser.add_argument("--every", type=int, default=1, help="evaluate every Nth saved checkpoint")
     parser.add_argument("--record", type=Path, help="save robot and task-object trajectory NPZ (requires --checkpoint-file)")
+    parser.add_argument("--door-sweep", action="store_true", help="Evaluate one door reference over matched physics samples")
+    parser.add_argument("--physics-config", type=Path, help="JSON task.door_randomization_cfg ranges (default: checkpoint)")
+    parser.add_argument("--random-samples", type=int, default=128, help="Uniform joint physics samples, in addition to nominal and boundaries")
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--output-dir", type=Path, help="Required for --door-sweep; stores protocol, per-trial results and trajectories")
     return parser
 
 
@@ -210,8 +217,7 @@ def _restore_open_door_config(cfg, checkpoint):
                 sensor.counts_exponent = command.tactile_counts_exponent
 
 
-def score_checkpoint(path: Path, args):
-    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+def _evaluation_config(checkpoint, args):
     policy_cfg = _policy_config(checkpoint)
     cfg = load_env_cfg(args.task, play=True)
     cfg.auto_reset = False
@@ -235,6 +241,12 @@ def score_checkpoint(path: Path, args):
         cfg.scene.num_envs = 1 if motion_path.is_file() else len(list(motion_path.glob("*.npz")))
     if not cfg.scene.num_envs:
         raise ValueError(f"No standard motion NPZ files found in {cfg.commands['motion'].motion_dir}")
+    return cfg
+
+
+def score_checkpoint(path: Path, args):
+    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+    cfg = _evaluation_config(checkpoint, args)
     native = ManagerBasedRlEnv(cfg, device=args.device)
     metrics = None
     try:
@@ -261,10 +273,155 @@ def score_checkpoint(path: Path, args):
         native.close()
 
 
+def _door_scenarios(command, args):
+    from supermimic.tasks.open_door.events import DoorRandomizationCfg
+
+    fields = dict(mass="door_mass", damping="door_damping", hinge_friction="door_friction",
+                  stiffness="door_stiffness", robot_friction="robot_door_friction")
+    ranges = command.door_randomization_cfg
+    if args.physics_config is not None:
+        ranges = DoorRandomizationCfg(**json.loads(args.physics_config.read_text())["task"]["door_randomization_cfg"])
+    nominal = {key: getattr(command, field) for key, field in fields.items()}
+    scenarios = [dict(name="nominal", group="nominal", physics=nominal)]
+    for key in fields:
+        for label, value in zip(("low", "high"), getattr(ranges, key)):
+            scenarios.append(dict(name=f"{key}_{label}", group="one_factor", physics={**nominal, key: value}))
+    for i, values in enumerate(itertools.product(*(getattr(ranges, key) for key in fields))):
+        scenarios.append(dict(name=f"corner_{i:02d}", group="corners", physics=dict(zip(fields, values))))
+    rng = np.random.default_rng(args.seed)
+    bounds = np.array([getattr(ranges, key) for key in fields])
+    for i, values in enumerate(rng.uniform(bounds[:, 0], bounds[:, 1], size=(args.random_samples, len(fields)))):
+        scenarios.append(dict(name=f"random_{i:04d}", group="random", physics=dict(zip(fields, values.tolist()))))
+    return scenarios
+
+
+def _sha256(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def score_door_sweep(paths, args):
+    """Reuse one scene across checkpoints; preserve an auditable paired protocol."""
+    from motion_data import load_motion
+    from supermimic.rl.evaluation_report import atomic_write_report
+    from supermimic.tasks.open_door.assets import door_xml_path, select_motion_files
+    from supermimic.tasks.open_door.commands import DoorCommandCfg
+    from supermimic.tasks.open_door.evaluation import evaluate_door_sweep
+
+    if args.output_dir is None or args.motion_dir is None:
+        raise ValueError("--door-sweep requires explicit --output-dir and --motion-dir")
+    if args.watch or args.record is not None:
+        raise ValueError("Door sweeps save trajectories automatically; omit --watch and --record")
+    if args.random_samples < 1 or not 0 <= args.seed < 2**32:
+        raise ValueError("Require --random-samples >= 1 and seed in [0, 2**32)")
+    if not paths:
+        raise ValueError("No checkpoints found")
+    checkpoint = torch.load(paths[0], map_location="cpu", weights_only=False, mmap=True)
+    cfg = _evaluation_config(checkpoint, args)
+    command = cfg.commands["motion"]
+    if not isinstance(command, DoorCommandCfg) or len(select_motion_files(command)) != 1:
+        raise ValueError("Door sweeps require one OpenDoor/OpenDoorSide reference NPZ")
+    scenarios = _door_scenarios(command, args)
+    cfg.scene.num_envs, cfg.seed = len(scenarios), args.seed
+    cfg.events["door_physics"].params["physics"] = {
+        key: [sample["physics"][key] for sample in scenarios] for key in scenarios[0]["physics"]}
+    motion_path, xml_path = select_motion_files(command)[0], door_xml_path(command)
+    clip = load_motion(motion_path)
+    cfg.episode_length_s = max(cfg.episode_length_s, (len(clip["root_pos"]) - 1) / float(clip["fps"]) + 1)
+    import inspect
+    import mujoco
+    from supermimic.tasks.open_door import events, evaluation
+    protocol = dict(schema_version=1, task=args.task, seed=args.seed, scenarios=scenarios,
+                    reference=str(motion_path.resolve()), reference_sha256=_sha256(motion_path),
+                    door_xml=str(xml_path.resolve()), door_xml_sha256=_sha256(xml_path),
+                    checkpoint_task=checkpoint["task"], policy_config=_policy_config(checkpoint),
+                    initial_state="exact reference first frame; no reset/observation/action noise",
+                    robot_physics=asdict(command.physical_cfg), physics_source=(str(args.physics_config.resolve())
+                    if args.physics_config is not None else "checkpoint door_randomization"),
+                    device=args.device, torch_version=torch.__version__, mujoco_version=mujoco.__version__,
+                    code_sha256={Path(file).name: _sha256(file) for file in
+                                 (__file__, inspect.getfile(events), inspect.getfile(evaluation))})
+    # Normalize tuples to lists before comparing a previously saved protocol.
+    protocol = json.loads(json.dumps(protocol))
+    destination = args.output_dir
+    destination.mkdir(parents=True, exist_ok=True)
+    protocol_path = destination / "protocol.json"
+    if protocol_path.exists() and json.loads(protocol_path.read_text()) != protocol:
+        raise ValueError(f"Existing protocol differs: use a new --output-dir ({protocol_path})")
+    atomic_write_report(protocol_path, protocol)
+    protocol_hash = _sha256(protocol_path)
+    del checkpoint, clip
+    native = ManagerBasedRlEnv(cfg, device=args.device)
+    try:
+        env = RslRlVecEnvWrapper(native)
+        runner = load_runner_cls(args.task)(env, asdict(load_rl_cfg(args.task)), device=args.device)
+        results = []
+        for path in paths:
+            result_path = destination / f"{path.stem}_eval.json"
+            checkpoint_hash = _sha256(path)
+            if result_path.exists():
+                result = json.loads(result_path.read_text())
+                if result["protocol_sha256"] != protocol_hash or result["checkpoint_sha256"] != checkpoint_hash:
+                    raise ValueError(f"Saved result identity differs: {result_path}")
+                print(f"Already evaluated: {path.name}", flush=True)
+            else:
+                started = time.monotonic()
+                runner.load(str(path), load_cfg={"actor": True}, map_location=args.device)
+                native.seed(args.seed)
+                result = evaluate_door_sweep(native, runner, scenarios,
+                                             record=destination / f"{path.stem}_trajectories.npz")
+                result.update(checkpoint=str(path.resolve()), checkpoint_sha256=checkpoint_hash,
+                              iteration=int(re.search(r"_(\d+)\.pt$", path.name).group(1)),
+                              protocol_sha256=protocol_hash, elapsed_seconds=time.monotonic() - started,
+                              eval_at=time.strftime("%Y-%m-%d %H:%M:%S"))
+                atomic_write_report(result_path, result)
+                print(f"Evaluated {path.name} in {result['elapsed_seconds']:.1f}s: "
+                      f"{json.dumps(result['summaries'])}", flush=True)
+            results.append(result)
+            rows, summary_rows = [], []
+            # A single-checkpoint rerun must retain the other saved results.
+            saved = [json.loads(file.read_text()) for file in destination.glob("*_eval.json")]
+            for item in sorted(saved, key=lambda value: value["iteration"]):
+                if item["protocol_sha256"] != protocol_hash:
+                    raise ValueError("Output directory contains results from a different protocol")
+                for trial in item["per_trial"]:
+                    rows.append(dict(checkpoint=Path(item["checkpoint"]).name, iteration=item["iteration"],
+                                     **{key: value for key, value in trial.items() if key != "physics"},
+                                     **trial["physics"]))
+                for group, summary in item["summaries"].items():
+                    summary_rows.append(dict(iteration=item["iteration"], group=group,
+                        **{key: value for key, value in summary.items() if not isinstance(value, dict)},
+                        **{f"{scope}_{key}": value for scope in ("executed_prefix", "completed_only")
+                           for key, value in summary[scope].items()}))
+            for name, table in (("trials.csv", rows), ("summary.csv", summary_rows)):
+                temporary = destination / f".{name}.tmp"
+                with temporary.open("w") as stream:
+                    writer = csv.DictWriter(stream, fieldnames=list(table[0]))
+                    writer.writeheader()
+                    writer.writerows(table)
+                temporary.replace(destination / name)
+        return results
+    finally:
+        native.close()
+
+
 def main(argv=None):
     args = build_parser().parse_args(argv)
     if args.every < 1:
         raise ValueError("--every must be positive")
+    if args.door_sweep:
+        if args.checkpoint_file:
+            paths = [Path(args.checkpoint_file)]
+        elif args.run_dir is not None:
+            pattern = re.compile(r"(?:model|ckpt)_(\d+)\.pt$")
+            paths = sorted((p for p in args.run_dir.glob("*.pt") if pattern.fullmatch(p.name)),
+                           key=lambda p: int(pattern.fullmatch(p.name).group(1)))[::args.every]
+        else:
+            raise ValueError("Provide --checkpoint-file or --run-dir")
+        return score_door_sweep(paths, args)
     if args.checkpoint_file:
         return score_checkpoint(Path(args.checkpoint_file), args)
     if args.run_dir is None:

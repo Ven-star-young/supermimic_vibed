@@ -3,10 +3,10 @@
 import numpy as np
 
 
-# G1's elbow and wrist-roll shells cover the forearm; wrist-pitch/yaw and
-# rubber hand are not included. Shoulder-yaw is the upper arm, not the shoulder.
+# Shoulder-yaw covers the upper arm; elbow and wrist-roll cover the forearm.
+# Wrist-pitch/yaw and rubber hand are not included.
 ALLOWED_BODIES = ("right_shoulder_pitch_link", "right_shoulder_roll_link",
-                  "right_elbow_link", "right_wrist_roll_link")
+                  "right_shoulder_yaw_link", "right_elbow_link", "right_wrist_roll_link")
 TORSO_BODIES = ("torso_link", "logo_link")
 SIDE_CONTACT_SCHEMA = {
     "side": "right",

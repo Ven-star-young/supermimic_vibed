@@ -4,14 +4,13 @@
     "iterations": 10000,
     "gpu_ids": "all",
     "log_root": "logs/rsl_rl",
-    "run_name": "right_side_tracking_dr_rsi",
+    "run_name": "right_side_hug_elbow_rsi",
     "seed": 0,
     "wm_batch": 512,
     "pi_batch": 512,
     "buffer_steps": 256,
     "warmup_steps": 64,
-    "wm_only_iters": 0,
-    "wm_checkpoint": "logs/rsl_rl/supermimic_open_door/2026-10-31_17-06-12_back_tracking_dr_rsi/model_10000.pt",
+    "wm_only_iters": 500,
     "wm_window": 8,
     "horizon": 32,
     "wm_batches": 10,
@@ -34,8 +33,9 @@
     "load_checkpoint": "model_.*.pt"
   },
   "task": {
-    "motion_dir": "data/motions/open_door_prepared/video6_g1_door_video45_right_side_asset.npz",
+    "motion_dir": "data/motions/kimodo_side60_hug_elbow/side60_hug_elbow.npz",
     "door_xml": null,
+    "use_tactile": false,
     "history_length": 10,
     "goal_frames": 10,
     "sampling_mode": "adaptive",
@@ -122,7 +122,7 @@
     "robot_door_friction": 0.7,
     "door_spring_reference": -0.1,
     "door_randomization_cfg": {
-      "enabled": true,
+      "enabled": false,
       "mass": [
         5.0,
         15.0
@@ -173,6 +173,6 @@
       "calibration_start": 1,
       "com_start": 30
     },
-    "episode_length_s": 15.0
+    "episode_length_s": 30.0
   }
 }

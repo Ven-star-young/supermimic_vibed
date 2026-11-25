@@ -31,7 +31,7 @@ class DoorRandomizationCfg:
 
 @requires_model_fields("body_mass", "body_inertia", "dof_damping", "dof_frictionloss",
                        "jnt_stiffness", "geom_friction", recompute=RecomputeLevel.set_const)
-def randomize_door_physics(env, env_ids=None, command_name="motion"):
+def randomize_door_physics(env, env_ids=None, command_name="motion", physics=None):
     cmd = env.command_manager.get_term(command_name)
     cfg, sim = cmd.cfg, env.sim
     randomization = cfg.door_randomization_cfg
@@ -44,6 +44,10 @@ def randomize_door_physics(env, env_ids=None, command_name="motion"):
     panel = int(sim.mj_model.geom("door/door_panel").id)
 
     def sample(name, nominal):
+        # Evaluation supplies the same explicit table for every checkpoint.
+        # Keep play=True so robot/reset/sensor noise remain disabled.
+        if physics is not None:
+            return torch.as_tensor(physics[name], dtype=torch.float32, device=env.device)[ids]
         values = torch.empty(len(ids), device=env.device)
         if cfg.play or not randomization.enabled:
             return values.fill_(nominal)

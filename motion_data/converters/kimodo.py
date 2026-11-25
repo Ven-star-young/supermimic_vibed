@@ -4,8 +4,10 @@ Usage: python -m motion_data.converters.kimodo SOURCE.csv OUTPUT \
     --metadata SOURCE.json --door-reference DOOR.npz
 
 CSV columns are root xyz, root wxyz and 29 joint angles. Metadata supplies fps,
-joint_names, world_offset (XY translation only), door_angle and optional provenance.
-This importer does not retarget, rotate, resample or repair the generated motion.
+joint_names, world_offset (XY translation), door_angle and optional provenance.
+Optional world_yaw rotates the whole clip about +Z before translation; optional
+door_contact_region selects back (default) or right_side. Joint angles are unchanged.
+This importer does not retarget, resample or repair the generated motion.
 """
 
 import argparse
@@ -23,7 +25,7 @@ from ._common import g1_joints
 
 
 def convert_csv(path: Path, metadata_path: Path, door_reference: Path) -> dict:
-    """Keep the exported wxyz and named joint order; translate into the door frame."""
+    """Keep the named joint order; apply one rigid transform into the door frame."""
     path, metadata_path, door_reference = map(Path, (path, metadata_path, door_reference))
     metadata = json.loads(metadata_path.read_text())
     required = {"fps", "joint_names", "world_offset", "door_angle"}
@@ -38,24 +40,40 @@ def convert_csv(path: Path, metadata_path: Path, door_reference: Path) -> dict:
     offset = np.asarray(metadata["world_offset"], dtype=np.float64)
     if offset.shape != (3,) or not np.isfinite(offset).all() or offset[2] != 0:
         raise ValueError("world_offset must be finite [x, y, 0]; only XY translation is supported")
+    yaw = np.asarray(metadata.get("world_yaw", 0.), dtype=np.float64)
+    if yaw.shape != () or not np.isfinite(yaw):
+        raise ValueError("world_yaw must be a finite scalar angle in radians")
+    region = metadata.get("door_contact_region", "back")
+    if not isinstance(region, str) or region not in ("back", "right_side"):
+        raise ValueError("door_contact_region must be back or right_side")
     raw = np.loadtxt(path, delimiter=",", dtype=np.float64, ndmin=2)
     if raw.shape[1] != 36 or not len(raw) or not np.isfinite(raw).all():
         raise ValueError("Kimodo G1 CSV must contain finite rows of 36 columns: xyz, wxyz, 29 joints")
+    root_pos, root_quat = raw[:, :3].copy(), raw[:, 3:7]
+    if float(yaw) != 0:
+        c, s = np.cos(yaw), np.sin(yaw)
+        root_pos[:, :2] = root_pos[:, :2] @ np.array([[c, s], [-s, c]])
+        # Left-multiply the exported wxyz by the world yaw quaternion.
+        c, s = np.cos(yaw / 2), np.sin(yaw / 2)
+        w, x, y, z = root_quat.T
+        root_quat = np.column_stack((c * w - s * z, c * x - s * y,
+                                     c * y + s * x, c * z + s * w))
     source_xml = door_reference.with_suffix(".xml")
     template = load_motion(door_reference)
     validate_door_asset(template, source_xml)
     clip = {
         "fps": np.asarray(metadata["fps"], dtype=np.float64),
-        "root_pos": raw[:, :3] + offset,
-        "root_quat": raw[:, 3:7],
+        "root_pos": root_pos + offset,
+        "root_quat": root_quat,
         "joint_pos": raw[:, 7:],
         "joint_names": np.asarray(names),
         **{f"door_{key}": template[f"door_{key}"] for key in DOOR_METADATA_SHAPES},
         "door_angle": np.asarray(metadata["door_angle"], dtype=np.float64),
         "door_coordinate_frame": np.asarray("asset"),
-        "door_contact_region": np.asarray("back"),
+        "door_contact_region": np.asarray(region),
         "root_quat_order": np.asarray("wxyz"),
         "world_offset": offset,
+        "world_yaw": yaw,
         "kinematic_only": np.asarray(True),
         "door_angle_source": np.asarray("authored_kinematic"),
         "source_name": np.asarray(path.name),
