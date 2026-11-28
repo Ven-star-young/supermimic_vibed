@@ -4,7 +4,7 @@
 Differentiable World Model* ([arXiv:2610.28480](https://arxiv.org/abs/2610.28480)).
 Original implementation: **Chong Zhang** (ETH Zurich). Code license: [MIT](LICENSE).
 
-这个分支按任务类别组织网络。Tracking、Sitting、OpenDoor 和 OpenDoorSide 各自拥有 Actor、WM、Critic；
+这个分支按任务类别组织网络。Tracking、Sitting、OpenDoor、OpenDoorSide 和 Ledge 各自拥有 Actor、WM、Critic；
 共同复用真实 Replay、WM 拟合、可微分想象和 Critic 更新代码。Sitting 的目标是
 学习该类任务中的机器人–椅子动力学，帮助训练策略；收敛和未见椅型表现需要实验评价。
 
@@ -21,6 +21,7 @@ Original implementation: **Chong Zhang** (ETH Zurich). Code license: [MIT](LICEN
 | Sitting | 102 | 1116→29 | 224→82 | 1101→1 |
 | OpenDoor（背部跟踪） | 102 | 1052→29 | 152→72 | 955→1 |
 | OpenDoorSide（右侧跟踪） | 102 | 1052→29 | 152→72 | 955→1 |
+| Ledge（高台贴背通行） | 105 | 1082→29 | 137→70 | 934→1 |
 
 默认历史和未来参考各10帧。Sitting 每个环境只有一把椅子；不同环境可以使用
 不同椅型，采用固定平衡分配，不周期性关闭重建场景。1024×6的资产局部点云编码为
@@ -33,6 +34,7 @@ Original implementation: **Chong Zhang** (ETH Zurich). Code license: [MIT](LICEN
 - [OpenDoorSide独立配置、右侧接触奖励与训练](docs/open-door-side-workflow.md)
 - [数据源转换、纯运动学回放、碰撞资产](docs/motion-and-assets.md)
 - [高台窄路 video11：当前选用的 reference 与回放](docs/motion-and-assets.md#video11-加长贴背窄路仅局部修正)
+- [Ledge 任务：场景特权观测、稳定奖励与训练](docs/ledge-workflow.md)
 - [G1 触觉点、通道与 mjlab 传感器](docs/tactile.md)
 - [OpenDoor 本体＋10帧触觉蒸馏](supermimic/distillation/open_door/README.md)
 - [Sitting 本体＋单帧深度视觉蒸馏](supermimic/distillation/sitting/README.md)
@@ -49,6 +51,7 @@ supermimic/tasks/sitting/      Sitting网络、动力学、场景和混合椅型
 supermimic/tasks/open_door/    G1＋被动铰链轨迹跟踪，复用Tracking网络与Runner
 supermimic/tasks/open_door_side/ 右侧躯干／肩／前臂开门，独立奖励和checkpoint
 supermimic/tasks/yogaball/     G1＋自由刚体瑜伽球的同步轨迹跟踪
+supermimic/tasks/ledge/        固定高台贴背通行，场景特权观测与稳定性约束
 supermimic/scripts/            train_sitting / play_policy / evaluate
 ```
 
@@ -89,6 +92,18 @@ uv run list-envs --keyword YogaBall
 本阶段为机器人＋球的轨迹跟踪，接触标签保留在数据中，未加入接触奖励或触觉策略输入。
 球的名义质量暂设为 1 kg，使用原始三块凸碰撞几何；这是一组未标定的刚体仿真参数。
 数据、回放与参数说明见 [YogaBall 任务](docs/motion-and-assets.md#yogaball-任务)。
+
+## 高台贴背通行训练
+
+```bash
+./run_ledge.sh --check
+./run_ledge.sh
+```
+
+编辑 `configs/ledge.json`，任务 ID 为 `Mjlab-SuperMimic-Ledge-Unitree-G1`。
+默认使用已认可的 video11 局部修正版和配套 XML，增加墙面／台边几何观测、
+支撑与贴背约束，首版不施加外力。任务接入与短程训练检查不代表策略已学会全程通过。
+详见 [Ledge 训练流程](docs/ledge-workflow.md)。
 
 ## 坐椅子训练
 

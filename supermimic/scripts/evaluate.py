@@ -217,11 +217,33 @@ def _restore_open_door_config(cfg, checkpoint):
                 sensor.counts_exponent = command.tactile_counts_exponent
 
 
+def _restore_ledge_config(cfg, checkpoint):
+    """Restore the saved ledge reward/physics before building the static scene."""
+    from supermimic.tasks.ledge.commands import LedgeCommandCfg
+
+    command, metadata = cfg.commands["motion"], checkpoint.get("task") or {}
+    if not isinstance(command, LedgeCommandCfg):
+        return
+    if metadata.get("name") != "g1_ledge" or metadata.get("schema_version") != 1:
+        raise ValueError("Ledge evaluation requires a g1_ledge schema-1 checkpoint")
+    updates = {}
+    for saved, field in (("ledge_reward", "ledge_reward_cfg"), ("robot_reward", "reward_cfg"),
+                         ("observation", "observation_cfg"), ("robot_physics", "physical_cfg")):
+        current, values = getattr(command, field), metadata.get(saved, {})
+        if not isinstance(values, dict) or set(values) != set(asdict(current)):
+            raise ValueError(f"Ledge checkpoint {saved} fields do not match the task schema")
+        updates[field] = replace(current, **values)
+    # The scene's lazy spec factory intentionally shares this command object.
+    for field, value in updates.items():
+        setattr(command, field, value)
+
+
 def _evaluation_config(checkpoint, args):
     policy_cfg = _policy_config(checkpoint)
     cfg = load_env_cfg(args.task, play=True)
     cfg.auto_reset = False
     _restore_open_door_config(cfg, checkpoint)
+    _restore_ledge_config(cfg, checkpoint)
     if args.motion_dir is not None:
         cfg.commands["motion"].motion_dir = str(args.motion_dir)
     if args.object_motion_file is not None:

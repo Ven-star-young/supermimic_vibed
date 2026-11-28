@@ -4,5 +4,6 @@ from . import open_door  # noqa: F401
 from . import open_door_side  # noqa: F401
 from . import sitting  # noqa: F401
 from . import yogaball  # noqa: F401
+from . import ledge  # noqa: F401
 
 TASK_ID = "Mjlab-SuperMimic-Tracking-Unitree-G1"

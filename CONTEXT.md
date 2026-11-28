@@ -1,7 +1,7 @@
 # Task-specific learning contracts
 
 This branch trains a separate Actor, World Model and Critic per task family.
-Tracking, Sitting, YogaBall, OpenDoor and OpenDoorSide share optimization machinery, not model parameters or a cross-task
+Tracking, Sitting, YogaBall, OpenDoor, OpenDoorSide and Ledge share optimization machinery, not model parameters or a cross-task
 state schema. Sitting contains exactly G1 + one free rigid chair per environment.
 Different worlds may use different native chair variants and matching references.
 YogaBall contains G1 + one free rigid ball and reuses Sitting's rigid-object state,
@@ -33,6 +33,25 @@ in motion_data/converters/gmr.py.
 No simulator or data files are loaded at module import. Native mjlab train/play remain
 available. Model construction belongs to the task; runner has no task-type dispatch.
 The former SharedTracking registration and cross-task WM/replay adapters are removed.
+
+Ledge (`g1_ledge`) follows the same task-local composition and shared Runner. It uses
+the approved video11 NPZ plus its hash-matched static XML/JSON; registration performs
+no asset I/O. Wall/platform geometry is fixed and has no dynamic object state.
+Robot state71/context33/increment70 remain unchanged. Actor frame105 is robot93 plus
+scene root position3 (height above platform), yaw sin/cos2, left/right sole margins2,
+left/right sole heights2 and scene linear velocity3. Ten-frame history plus future
+robot730→32 gives decoder1082→29. WM adds scene xy2/yaw sin-cos2 to its invariant
+features:137→70. Critic has204 current features plus730 future goals:934→1.
+Geometry derives from actual sole spheres and collision surfaces. Support uses the
+outer boundary of the union of all three platforms; internal seams are not cliffs,
+and toe mesh overhang is allowed. Planned stance and back schedules are resampled
+on the same 50Hz clock as the robot, never treated as measured force. Tensor rewards
+and hard/soft failures share the same geometry in real and imagined rollouts.
+Additional stability terms are nonpositive costs, preserving the tracking return
+ceiling. Exact reference resets avoid injecting initial wall/edge violations; RSI,
+observation noise and the existing robot physical randomization remain available.
+No constant or transient external force, force input, tactile/vision policy encoder,
+or WM memory is added. See docs/ledge-workflow.md for thresholds and validation.
 
 ## Numerical contracts
 
