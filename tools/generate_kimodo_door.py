@@ -250,11 +250,17 @@ def generate(folder: Path, *, seed=42, num_samples=4, steps=150, overwrite=False
     import torch
     import kimodo
     from kimodo import load_model
-    from kimodo.constraints import FullBodyConstraintSet, Root2DConstraintSet, save_constraints_lst
+    from kimodo.constraints import (EndEffectorConstraintSet, FullBodyConstraintSet,
+                                    Root2DConstraintSet, save_constraints_lst)
     from kimodo.exports.mujoco import MujocoQposConverter
     from kimodo.exports.motion_io import save_kimodo_npz
     from kimodo.skeleton import G1Skeleton34
     from kimodo.tools import seed_everything
+
+    class DeviceSafeEndEffectorConstraintSet(EndEffectorConstraintSet):
+        def crop_move(self, start, end):
+            # Kimodo recreates joint indices on CPU when cropping a segment.
+            return super().crop_move(start, end).to(self.frame_indices.device)
 
     with np.load(folder / "input.npz", allow_pickle=False) as archive:
         inputs = dict(archive)
@@ -288,18 +294,47 @@ def generate(folder: Path, *, seed=42, num_samples=4, steps=150, overwrite=False
     heading = heading[0] if heading.ndim == 3 else heading
     frames = torch.as_tensor(inputs["keyframes"], dtype=torch.long)
     path = torch.as_tensor(inputs["smooth_root_2d"], dtype=torch.float32)
+    if metadata.get("root_path_source") == "converted_smooth_root":
+        smoothed = torch.as_tensor(motion["smooth_root_pos"], dtype=torch.float32)
+        smoothed = smoothed[0] if smoothed.ndim == 3 else smoothed
+        origin = smoothed[0].clone()
+        origin[1] = 0  # Kimodo is Y-up; preserve the local floor height.
+        positions = positions - origin
+        path = (smoothed - origin)[:, [0, 2]]
+        shift = origin[[2, 0, 1]].cpu().numpy()
+        metadata["generation_frame_shift_m"] = shift.tolist()
+        metadata["world_offset"] = (np.asarray(metadata["world_offset"]) + shift).tolist()
     # Both constraint types share the same root path at pose keyframes.
     constraints = [Root2DConstraintSet(skeleton, torch.arange(len(path)), path, global_root_heading=heading),
                    FullBodyConstraintSet(skeleton, frames, positions[frames], rotations[frames],
                                          smooth_root_2d=path[frames])]
+    effector_frames = {}
+    for key, effectors in (("left_foot_keyframes", ["LeftFoot"]),
+                           ("right_foot_keyframes", ["RightFoot"]),
+                           ("hand_keyframes", ["LeftHand", "RightHand"]),
+                           ("root_pose_keyframes", ["Hips"])):
+        if key not in inputs:
+            continue
+        indices = np.asarray(inputs[key])
+        if (indices.ndim != 1 or indices.dtype.kind not in "iu" or not len(indices)
+                or indices.min() < 0 or indices.max() >= len(path) or len(np.unique(indices)) != len(indices)):
+            raise ValueError(f"{key} must contain unique frame indices inside the clip")
+        indices = torch.as_tensor(indices, dtype=torch.long)
+        constraints.append(DeviceSafeEndEffectorConstraintSet(
+            skeleton, indices, positions[indices], rotations[indices],
+            smooth_root_2d=path[indices], joint_names=effectors))
+        effector_frames[key] = indices.tolist()
     save_constraints_lst(str(folder / "constraints.json"), constraints)
     model = load_model(MODEL, device="cuda")
     if model.fps != metadata["fps"]:
         raise ValueError("Kimodo model FPS differs from the prepared input")
     seed_everything(seed)
+    cfg_weight = metadata.get("cfg_weight", [2., 3.])
+    if len(cfg_weight) != 2 or not np.isfinite(cfg_weight).all() or min(cfg_weight) < 0:
+        raise ValueError("cfg_weight must contain finite nonnegative text/constraint weights")
     output = model(prompts, lengths, constraint_lst=[constraint.to("cuda") for constraint in constraints],
                    num_denoising_steps=steps, num_samples=num_samples, multi_prompt=True,
-                   first_heading_angle=initial_heading, cfg_type="separated", cfg_weight=[2., 3.],
+                   first_heading_angle=initial_heading, cfg_type="separated", cfg_weight=cfg_weight,
                    num_transition_frames=5,
                    post_processing=False, return_numpy=True)
     exported = np.asarray(MujocoQposConverter(model.skeleton).dict_to_qpos(output, "cuda"))
@@ -308,12 +343,12 @@ def generate(folder: Path, *, seed=42, num_samples=4, steps=150, overwrite=False
     metadata["joint_names"] = names
     metadata["provenance"].update(
         prompts=prompts, num_frames=lengths, seed=seed, num_samples=num_samples, diffusion_steps=steps,
-        cfg_type="separated", cfg_weight=[2., 3.], first_heading_angle=initial_heading,
+        cfg_type="separated", cfg_weight=cfg_weight, first_heading_angle=initial_heading,
         num_transition_frames=5, post_processing=False,
         input_sha256=sha256(folder / "input.npz"), constraints_sha256=sha256(folder / "constraints.json"),
         input_metadata_sha256=sha256(folder / "metadata.json"), generation_script_sha256=sha256(__file__),
         kimodo_revision=git_revision(Path(kimodo.__file__).resolve().parent),
-        keyframes=inputs["keyframes"].tolist())
+        keyframes=inputs["keyframes"].tolist(), end_effector_keyframes=effector_frames)
     for index in range(num_samples):
         stem = folder / f"{output_stem}_{index:02d}"
         np.savetxt(stem.with_suffix(".csv"), exported[index], delimiter=",")

@@ -32,6 +32,7 @@ Original implementation: **Chong Zhang** (ETH Zurich). Code license: [MIT](LICEN
 - [OpenDoor数据适配、统一状态奖励与训练](docs/open-door-workflow.md)
 - [OpenDoorSide独立配置、右侧接触奖励与训练](docs/open-door-side-workflow.md)
 - [数据源转换、纯运动学回放、碰撞资产](docs/motion-and-assets.md)
+- [高台窄路 video11：当前选用的 reference 与回放](docs/motion-and-assets.md#video11-加长贴背窄路仅局部修正)
 - [G1 触觉点、通道与 mjlab 传感器](docs/tactile.md)
 - [OpenDoor 本体＋10帧触觉蒸馏](supermimic/distillation/open_door/README.md)
 - [Sitting 本体＋单帧深度视觉蒸馏](supermimic/distillation/sitting/README.md)

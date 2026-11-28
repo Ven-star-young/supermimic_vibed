@@ -4,6 +4,7 @@ uv run python tools/replay_motion.py data/motions/sitting
 uv run python tools/replay_motion.py clip.npz --camera-view
 uv run python tools/replay_motion.py clip.npz --sensor-view
 uv run python tools/replay_motion.py clip.npz --video replay.mp4
+uv run python tools/replay_motion.py clip.npz --scene-xml static_scene.xml
 """
 
 import argparse
@@ -23,7 +24,7 @@ HDMI_MIN_DEPTH = 0.1
 HDMI_MAX_DEPTH = 4.0
 
 
-def make_scene(model_path, clip, door_xml=None):
+def make_scene(model_path, clip, door_xml=None, scene_xml=None):
     import mujoco
 
     if Path(model_path).resolve() == DEFAULT_MODEL.resolve():
@@ -40,8 +41,14 @@ def make_scene(model_path, clip, door_xml=None):
         for geom in spec.geoms:
             if geom.contype or geom.conaffinity:
                 geom.group = 3  # This G1 has separate visual meshes in group 1.
-    spec.worldbody.add_geom(name="replay_floor", type=mujoco.mjtGeom.mjGEOM_PLANE,
-                            size=[0, 0, .05], rgba=[.86, .88, .9, 1])
+    if scene_xml is not None:
+        scene = mujoco.MjSpec.from_file(str(Path(scene_xml).resolve()))
+        if list(scene.joints) or any(body.mocap for body in scene.bodies):
+            raise ValueError("--scene-xml requires a static scene without joints or mocap bodies")
+        spec.attach(scene, prefix="replay_scene/", frame=spec.worldbody.add_frame())
+    if not any(geom.type == mujoco.mjtGeom.mjGEOM_PLANE for geom in spec.geoms):
+        spec.worldbody.add_geom(name="replay_floor", type=mujoco.mjtGeom.mjGEOM_PLANE,
+                                size=[0, 0, .05], rgba=[.86, .88, .9, 1])
     spec.worldbody.add_light(pos=[0, 0, 5], dir=[0, 0, -1])
     if "object_vertices" in clip:
         spec.add_mesh(name="replay_object_mesh", uservert=clip["object_vertices"].ravel(),
@@ -66,6 +73,9 @@ def make_scene(model_path, clip, door_xml=None):
     model = spec.compile()
     model.vis.global_.offwidth, model.vis.global_.offheight = 960, 720
     model.vis.headlight.ambient[:] = .4
+    if scene_xml is not None:
+        model.vis.headlight.ambient[:] = .45
+        model.vis.headlight.diffuse[:] = .55
     free = np.flatnonzero(model.jnt_type == mujoco.mjtJoint.mjJNT_FREE)
     if len(free) != 1:
         raise ValueError("Replay expects one floating robot root")
@@ -241,6 +251,7 @@ def main():
     parser.add_argument("--sensor-output", type=Path,
                         help="Save HDMI-shaped RGB/depth outputs to a compressed NPZ")
     parser.add_argument("--video", type=Path, help="Render one pass to MP4 (requires ffmpeg)")
+    parser.add_argument("--scene-xml", type=Path, help="Attach a fixed MJCF scene, such as a wall and ledge")
     args = parser.parse_args()
     if not np.isfinite(args.speed) or args.speed <= 0:
         parser.error("--speed must be finite and positive")
@@ -258,7 +269,8 @@ def main():
     n, fps = len(clip["root_pos"]), float(clip["fps"])
     print(f"[{args.index}/{len(files) - 1}] {path.name}: {n} frames, {fps:g} Hz, {n / fps:g}s")
     model, data, root_adr, joint_adrs, camera_id = make_scene(
-        args.model, clip, door_xml=path.with_suffix(".xml") if "door_angle" in clip else None)
+        args.model, clip, door_xml=path.with_suffix(".xml") if "door_angle" in clip else None,
+        scene_xml=args.scene_xml)
 
     def apply(frame):
         set_frame(model, data, clip, frame, root_adr, joint_adrs)
@@ -270,9 +282,9 @@ def main():
     if "door_angle" in clip:
         points = np.concatenate((points, clip["door_hinge_pos"][None]))
     camera.lookat[:] = (points.min(axis=0) + points.max(axis=0)) / 2
-    camera.lookat[2] = .7
+    camera.lookat[2] = float(points[:, 2].mean()) if args.scene_xml else .7
     camera.distance = max(3.0, float(np.ptp(points[:, :2], axis=0).max()) + 1.8)
-    camera.azimuth, camera.elevation = 135, -20
+    camera.azimuth, camera.elevation = (225 if args.scene_xml else 135), -20
     option = mujoco.MjvOption()
     option.geomgroup[3] = 0  # G1 collision meshes
 

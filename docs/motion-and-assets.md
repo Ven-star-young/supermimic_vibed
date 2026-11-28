@@ -77,6 +77,145 @@ print("10-frame goal:", tuple(motion.goal(motion.clip_start, 10).shape))
 PY
 ```
 
+### 背部贴墙窄台参考
+
+`data/motions/ledge_back/ledge_back.npz` 使用上述标准 G1 29 关节格式；同名 `.xml`
+保存固定直墙、窄台和下方地面。场景的 +X 指向墙外、+Y 为通行方向，墙面位于
+X=0。首版台面净宽 8 cm、长 2 m、离地 0.6 m，墙顶离地 2.2 m；台面沿用
+ground 碰撞类别，墙沿用 object 类别，机器人使用 `make_g1_spec(interaction_collisions=True)`。
+双臂采用侧面开门的胸前抱物形态；为把重心收回窄台，手腕目标在躯干坐标系的
+前向距离由 23 cm 收到 13 cm，并保留关节软限位。接触目标是背部，
+不继承侧面开门的肩臂接触许可。
+背部参考目标为 0.1 mm 的微小接触重叠，其他身体部位到墙的目标净距为 2 mm；
+这使回放姿态具有实际背部碰撞接触，而不把触觉的近距离响应误写成接触力。
+
+```bash
+uv run --extra motion python -m tools.generate_ledge_reference
+uv run python tools/replay_motion.py data/motions/ledge_back/ledge_back.npz \
+  --scene-xml data/motions/ledge_back/ledge_back.xml
+```
+
+`--scene-xml` 只接受没有关节或 mocap body 的固定场景。此回放仍只执行正运动学；
+reference 与资产生成不等于已训练 expert，也不证明闭环稳定性或真实接触力。
+后续任务沿用项目的参考动作、Replay、Actor / World Model / Critic 训练流程，
+允许 expert 使用完整场景信息。仅加载这个 NPZ 不会自动创建窄台训练环境。
+生成来源及几何参数在配套 JSON 中，预览与验证结果位于 `results/ledge_back/`。
+
+### video9 高台窄路资产
+
+`data/motions/ledge_video9/video9_g1_ledge.npz` 与同名 XML/JSON 配套，来自
+GMR 的 `video9_g1.npz`，原始副本和来源说明保存在该目录的 `source/`。
+767 帧、30 Hz，首末帧跨度 25.533 s；包含走近、转身、横向通过和离开。
+
+场景使用实体高台：台面离下层地面 **1.2 m**，中央窄路 **32 cm 宽、69 cm 长**，
+两端各接一个宽 **1.3 m** 的平台。通行方向为 +X，墙外方向为 +Y；中央墙面 Y=0，
+起终平台墙面后退 20 cm 以容纳原动作转身。墙顶 Z=2.7 m，外侧没有护栏或隐形支撑。
+窄路与平台同高、无接缝缺口；仅保留无碰撞的橙色边线；生成器不再添加蓝色/绿色区域标记。
+台体/下层地面使用 `contype=1`，墙使用 `contype=2`，均为 `conaffinity=0`；
+物理场景应配合 `make_g1_spec(interaction_collisions=True)` 挂载。
+
+```bash
+# 已保存源副本时，直接复现；支持 --height / --width（米）
+uv run python -m tools.prepare_ledge_scene
+# 或显式指定原始 GMR reference；已有派生输出需要 --overwrite
+uv run python -m tools.prepare_ledge_scene --source ../GMR/outputs/video9_g1.npz --overwrite
+uv run python tools/replay_motion.py data/motions/ledge_video9/video9_g1_ledge.npz \
+  --scene-xml data/motions/ledge_video9/video9_g1_ledge.xml
+```
+
+生成器按第 225:630 帧拟合一个整体航向旋转（约 +13.425°），再平移 XY；
+逐帧将最低足底球面移到台面，修正原始脚底约 −1.85 到 +7.20 cm 的离地偏差。
+关节角、相对朝向变化、帧数和采样率均保留。逐帧高度修正在 NPZ 的
+`scene_root_z_offset`，整体变换、尺寸和源/生成器/XML/派生 NPZ 哈希在 JSON。
+资产生成时检查全部八个足底球的投影支撑及全片墙面穿透，参数无法容纳动作时明确报错。
+
+整体预览、原速回放与独立检查见 `results/ledge_video9/`。30 Hz 原始采样的足底贴合误差
+仅为浮点量级；现有 `MotionLib` 重采样为 50 Hz 后，最大足底穿入约 0.378 mm、
+最低足底最大悬空约 4.462 mm，训练时仍需考虑插值后的接触误差。该 reference 尚未满足
+持续背部接触；当前完成的是静态资产和运动学对齐，闭环通行需后续任务训练验证。
+此 XML 可直接挂载至 MuJoCo 场景，加载 NPZ 本身不会注册或创建高台训练环境。
+
+### video11 加长贴背窄路：仅局部修正
+
+当前文件为 `data/motions/ledge_video11/video11_g1_ledge.npz` 与同名 XML/JSON。
+项目当前选用此局部修正版：1112 帧、30 Hz，NPZ SHA-256 为
+`9424f50919ba53b089c574232d9987c95293f148671cb1b6487947328e418ab6`。
+后续使用这一 NPZ 和配套 XML；当前目录顶层只有这一条动作，历史版本位于 `archive/`。
+场景保持 1.263 m 长、22 cm 宽、1.2 m 高，已移除起终平台的蓝色和绿色标记。已撤下整段 donor 进出场替换，
+恢复 `archive/long_22cm/` 的 video11 动作，只保留下列局部修改：
+
+- 源第 55:145 帧仅平滑臂关节高频噪声，最大改动约 1.79°；初段根、腿和腰不改。
+- 两段原双支撑停顿只压缩时间，不更换姿态或步序，约 4.6/2.7 s 缩至 1.8/1.2 s。
+- 源第 1148:1208 帧局部调整第一次离场左脚落点 Y+14 cm，随后接回原第二步落点；
+  只重新求解这 60 帧的根和腿，上肢和整体离场顺序保持。
+
+最终1112帧、30Hz，视频37.07秒。输出中948个未编辑的采样姿态与基准逐元素一致
+（四元数读写允许归一化舍入）。未使用 donor 片段；`base_frame_coordinate` 记录精确源时间，
+`base_frame_index` 标记整数源帧，停顿中的非整数位置仅作插值。
+
+```bash
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 \
+  .venv/bin/python -m tools.prepare_ledge_scene --local-repair --overwrite
+.venv/bin/python tools/replay_motion.py data/motions/ledge_video11/video11_g1_ledge.npz \
+  --scene-xml data/motions/ledge_video11/video11_g1_ledge.xml
+```
+
+局部修正默认读取 `archive/long_22cm/video11_g1_ledge.npz`，禁止覆盖来源。
+`--video11` 仍生成基础加长版本。被拒绝的整段替换及其生成器保存在
+`archive/rejected_full_transition/`，不再是当前入口。
+
+`results/ledge_video11/entry_comparison.mp4` 对比前7秒原动作与局部平滑结果；
+完整回放、脚尖近景及检查结果在同一目录。
+30/50/120Hz全部通过贴背、足底支撑与左右脚碰撞检查；脚间最小mesh净距约3.86cm，
+最大台面穿入约0.004/0.732/0.764mm。准静态检查822/1112帧可行，仍不代表全程静力可行
+或机器人闭环稳定通行。计划标签不是实测接触力。
+
+### 高台窄路完整流程
+
+当前参考为 `data/motions/kimodo_ledge_full/kimodo_ledge_full.npz`，配套同名XML/JSON。
+1788帧@30Hz，视频59.6秒；包含宽平台走近、分步转身、小步后退、横移进入窄路、
+核心通过、完整跨入终点宽平台、脱墙离开与站稳。中间核心为450帧、15秒，位于
+整段25.43–40.43秒。场景窄路长1.2m、宽30cm、台高1.2m，两端墙面后退20cm。
+
+核心保持五轮不交叉并步，每脚每轮侧移15cm。双臂全程使用侧面开门
+`kimodo_side60_hug_elbow/side60_hug_elbow.npz` 第0帧的胸前抱物姿态。
+旧24秒核心曾出现膝角约4°及251°/s的伸膝峰值；本版通过降低根高、站距改12cm、
+抬脚改1.5cm与重新安排15秒时序，消除了近伸直姿态。新核心最小膝角约37.3°，
+全流程最小膝角约32.2°，最大伸膝速度约114.5°/s。
+
+```bash
+# 播放当前完整参考
+uv run python tools/replay_motion.py data/motions/kimodo_ledge_full/kimodo_ledge_full.npz \
+  --scene-xml data/motions/kimodo_ledge_full/kimodo_ledge_full.xml
+# 从原认可核心复现修腿与全过程；已有产物显式覆盖
+uv run --extra motion python -m tools.generate_kimodo_ledge repair-core \
+  data/motions/kimodo_ledge_slow/kimodo_ledge_slow.npz \
+  data/motions/kimodo_ledge_full/core_fixed.npz --overwrite
+uv run --extra motion python -m tools.generate_kimodo_ledge complete \
+  data/motions/kimodo_ledge_full/core_fixed.npz \
+  data/motions/kimodo_ledge_full/kimodo_ledge_full.npz --overwrite
+```
+
+`repair-core` 只从旧核心提取已认可的根/腰变化，重新构造腿部计划；`prepare` 的当前默认
+也已更新为450帧新模板。普通 `refine` 仍支持按其配套模板重现之前的候选结果。
+`complete` 从核心真实FK首末姿态生成脚/重心计划，只求解前后段，核心450帧原样保留
+（四元数允许标准读写归一化的浮点舍入）。输入、配套资产与计划文件均有防覆盖和哈希校验。
+
+前后段使用实际有限墙体范围，避免虚拟无限墙挤出不自然姿态；合法logo背面与其余身体
+表面分别约束。转身时只旋转摆动脚，后退和离开拆成小步；重心转移按距离安排时间，
+普通落脚后不做短促的中点往返。输出 `kimodo_ledge_full_plan.npz/json` 保存脚位、足朝向、
+支撑、重心、贴背要求和阶段边界。最终NPZ带 `phase`、`core_range_frames`、`back_required`
+及逐帧误差；这些计划／几何标签不是测量接触力。
+
+30/实际MotionLib 50/120Hz检查均满足贴背要求，无非法墙接触、非足地面接触、脚掌越界、
+COM投影越界或硬/软关节限位违例。最低支撑余量约6.88mm，最大台面重叠约0.131mm；
+50Hz得到2979帧。完整视频、15秒核心、膝部对比、诊断与复现说明在
+`results/kimodo_ledge_full/`。
+
+本轮没有新增Kimodo推理：使用已认可的混合核心做运动学修复，前后段由计划与有界IK生成。
+历史Kimodo原生结果仍在 `data/motions/kimodo_ledge_slow_paced_raw/`，旧24秒核心保留在
+`data/motions/kimodo_ledge_slow/`。闭环机器人通行、动力学平衡及真实接触力尚未验证。
+
 ### PA-HOI 抱瑜伽球与大气球
 
 `data/pahoi/hold/` 保存从 Lexar `data_reviewed_torso_v1` 迁入的完整物体子集：
